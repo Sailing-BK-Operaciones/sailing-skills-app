@@ -1,0 +1,13 @@
+.streamlit/secrets.toml
+# carpetas a ignorar (artefactos de setup)
+sailing-skills-app/
+streamlit/
+__pycache__/
+*.pyc
+*.pyo
+.env
+*.egg-info/
+dist/
+build/
+.DS_Store
+Thumbs.db
