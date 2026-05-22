@@ -4,8 +4,10 @@ Usa st.cache_resource para mantener un único objeto en memoria del servidor.
 Los archivos persisten hasta el próximo re-deploy de la app.
 """
 import io
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import streamlit as st
+
+AR_TZ = timezone(timedelta(hours=-3))  # UTC-3 Buenos Aires
 
 
 @st.cache_resource
@@ -20,7 +22,7 @@ def save_file(key: str, uploaded_file) -> None:
     _store()[key] = {
         "bytes":       uploaded_file.read(),
         "name":        uploaded_file.name,
-        "uploaded_at": datetime.now().strftime("%d/%m/%Y %H:%M"),
+        "uploaded_at": datetime.now(AR_TZ).strftime("%d/%m/%Y %H:%M"),
     }
 
 
