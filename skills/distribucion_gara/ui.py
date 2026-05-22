@@ -40,7 +40,7 @@ def render():
     col1, col2 = st.columns(2)
     with col1:
         sagaclte_file = shared_or_upload("shared_sagaclte", "SAGACLTE.XLS (garantías BYMA)", ["xls", "xlsx"], "dg_saga")
-        sateclte_file = st.file_uploader("SATECLTE.XLS (tenencia disponible)", type=["xls", "xlsx"], key="dg_sate")
+        sateclte_file = shared_or_upload("shared_sateclte", "SATECLTE.XLS (tenencia disponible)", ["xls", "xlsx"], "dg_sate")
     with col2:
         pc_file      = shared_or_upload("shared_pc", "Precios de cierre PC*.XLS", ["xls", "xlsx"], "dg_pc")
         saldos_file  = st.file_uploader("Saldos Gara a cubrir.xlsx", type=["xlsx"], key="dg_saldos")
@@ -51,11 +51,11 @@ def render():
     with col3:
         especies_file   = shared_or_upload("shared_especies", "ESPECIES.XLS", ["xls", "xlsx"], "dg_esp")
         pdf_file        = shared_or_upload("shared_pdf_aforos", "PDF aforos BYMA", ["pdf"], "dg_pdf")
-        contbole_file   = st.file_uploader("CONTBOLE.XLS (boletos del día)", type=["xls", "xlsx"], key="dg_cont")
+        contbole_file   = shared_or_upload("shared_contbole", "CONTBOLE.XLS (boletos del día)", ["xls", "xlsx"], "dg_cont")
     with col4:
-        aforo_sail_file = st.file_uploader("tabla listas gallo vs aforos.xlsx", type=["xlsx"], key="dg_aforo")
+        aforo_sail_file = shared_or_upload("shared_aforo_sail", "tabla listas gallo vs aforos.xlsx", ["xlsx"], "dg_aforo")
         accounts_file   = shared_or_upload("shared_accounts", "table-accounts_*.csv", ["csv"], "dg_acc")
-        tabcompb_file   = st.file_uploader("TABCOMPB.XLS (opcional — activa ops CI)", type=["xls", "xlsx"], key="dg_tabcompb")
+        tabcompb_file   = shared_or_upload("shared_tabcompb", "TABCOMPB.XLS (activa ops CI)", ["xls", "xlsx"], "dg_tabcompb")
 
     # ── Opcional: RMC ────────────────────────────────────────────────────────────
     with st.expander("Archivo opcional — Risk Monitoring Client"):
@@ -95,7 +95,7 @@ def render():
 
     if not tabcompb_file:
         st.warning(
-            "TABCOMPB.XLS no subido — las operaciones CI de CONTBOLE no se clasificarán "
+            "TABCOMPB.XLS no disponible — las operaciones CI de CONTBOLE no se clasificarán "
             "(sin impacto si no hay ops CI hoy)."
         )
 

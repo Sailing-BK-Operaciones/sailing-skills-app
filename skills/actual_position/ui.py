@@ -42,9 +42,8 @@ def render():
                 "shared_especies", "ESPECIES.XLS (para Código CVSA)", ["xls", "xlsx"], "ap_especies"
             )
         with col4:
-            saldos_file = st.file_uploader(
-                "saldos al inicio Nasdaq.csv",
-                type=["csv"], key="ap_saldos"
+            saldos_file = shared_or_upload(
+                "shared_saldos_nasdaq", "saldos al inicio Nasdaq.csv", ["csv"], "ap_saldos"
             )
 
     st.divider()
