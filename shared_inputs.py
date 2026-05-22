@@ -67,9 +67,13 @@ def render():
                 key=f"uploader_{key}",
             )
             if uploaded is not None:
-                save_file(key, uploaded)
-                # Forzar rerun para actualizar el estado visual inmediatamente
-                st.rerun()
+                # Identificamos el archivo por nombre + tamaño para evitar el loop
+                # pero permitir re-subir el mismo nombre con contenido actualizado
+                upload_id = f"{uploaded.name}_{uploaded.size}"
+                if st.session_state.get(f"_sid_{key}") != upload_id:
+                    save_file(key, uploaded)
+                    st.session_state[f"_sid_{key}"] = upload_id
+                    st.rerun()
 
         with col_status:
             st.write("")
