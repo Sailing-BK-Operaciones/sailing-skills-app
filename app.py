@@ -63,9 +63,10 @@ skill = st.sidebar.radio(
 )
 
 # Indicador de archivos compartidos cargados
+from shared_store import is_loaded as _is_loaded
 _SHARED_KEYS = ["shared_especies", "shared_accounts", "shared_pdf_aforos",
                 "shared_pc", "shared_sagaclte"]
-_n = sum(1 for k in _SHARED_KEYS if st.session_state.get(k))
+_n = sum(1 for k in _SHARED_KEYS if _is_loaded(k))
 if _n == len(_SHARED_KEYS):
     st.sidebar.success(f"✓ {_n}/{len(_SHARED_KEYS)} archivos compartidos")
 elif _n > 0:

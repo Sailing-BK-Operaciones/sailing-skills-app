@@ -1,6 +1,6 @@
 import streamlit as st
+from shared_store import save_file, get_meta, is_loaded
 
-# Claves en session_state y metadata de cada archivo compartido
 SHARED_FILES = [
     {
         "key":   "shared_especies",
@@ -39,10 +39,14 @@ def render():
     st.title("Archivos Compartidos")
     st.markdown(
         "Estos archivos se usan en múltiples skills. Subílos acá una sola vez y "
-        "quedan disponibles durante toda la sesión sin necesidad de volver a subirlos "
-        "al cambiar de skill.  \n"
+        "quedan disponibles para **todos los usuarios** durante toda la sesión.  \n"
         "**Podés re-subir cualquier archivo en cualquier momento** si se actualizó "
         "durante la rueda — el nuevo reemplaza al anterior automáticamente."
+    )
+    st.info(
+        "🔄 Los archivos son compartidos entre usuarios: lo que sube un miembro del equipo "
+        "lo ven todos los demás en su próxima acción.",
+        icon=None,
     )
     st.divider()
 
@@ -52,7 +56,7 @@ def render():
         desc  = info["desc"]
         types = info["types"]
 
-        current = st.session_state.get(key)
+        nombre, fecha = get_meta(key)
 
         col_up, col_status = st.columns([3, 1])
 
@@ -63,22 +67,24 @@ def render():
                 key=f"uploader_{key}",
             )
             if uploaded is not None:
-                st.session_state[key] = uploaded
+                save_file(key, uploaded)
+                # Forzar rerun para actualizar el estado visual inmediatamente
+                st.rerun()
 
         with col_status:
-            # Vertical alignment trick
             st.write("")
             st.write("")
-            if st.session_state.get(key) is not None:
-                st.success("✓ Cargado")
+            if is_loaded(key):
+                nombre, fecha = get_meta(key)
+                st.success(f"✓ Cargado  \n{fecha}")
+                st.caption(nombre)
             else:
                 st.warning("Sin cargar")
 
     st.divider()
 
-    # ── Resumen de estado ────────────────────────────────────────────────────
-    cargados  = [f["label"] for f in SHARED_FILES if st.session_state.get(f["key"])]
-    faltantes = [f["label"] for f in SHARED_FILES if not st.session_state.get(f["key"])]
+    cargados  = [f["label"] for f in SHARED_FILES if is_loaded(f["key"])]
+    faltantes = [f["label"] for f in SHARED_FILES if not is_loaded(f["key"])]
 
     if cargados:
         st.success(f"Cargados ({len(cargados)}/{len(SHARED_FILES)}): {', '.join(cargados)}")
