@@ -6,20 +6,39 @@ st.set_page_config(
     layout="wide"
 )
 
+MAX_INTENTOS = 5
+
 def check_password():
     if "authenticated" not in st.session_state:
         st.session_state.authenticated = False
+    if "failed_attempts" not in st.session_state:
+        st.session_state.failed_attempts = 0
 
     if not st.session_state.authenticated:
         st.title("Sailing Inversiones")
         st.subheader("Acceso al panel de skills operativas")
+
+        if st.session_state.failed_attempts >= MAX_INTENTOS:
+            st.error(
+                f"Acceso bloqueado por {MAX_INTENTOS} intentos fallidos. "
+                "Cerrá esta pestaña y volvé a abrir el link para reintentar."
+            )
+            return False
+
+        restantes = MAX_INTENTOS - st.session_state.failed_attempts
         password = st.text_input("Contraseña:", type="password")
         if st.button("Ingresar"):
             if password == st.secrets["PASSWORD"]:
                 st.session_state.authenticated = True
+                st.session_state.failed_attempts = 0
                 st.rerun()
             else:
-                st.error("Contraseña incorrecta")
+                st.session_state.failed_attempts += 1
+                restantes -= 1
+                if restantes > 0:
+                    st.error(f"Contraseña incorrecta. Intentos restantes: {restantes}")
+                else:
+                    st.rerun()
         return False
     return True
 
