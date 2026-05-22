@@ -36,6 +36,7 @@ skill = st.sidebar.radio(
         "Risk Monitoring Client",
         "Risk Position",
         "Distribución Gara BYMA",
+        "Genera TXT Gara NASDAQ",
         "Actual Position",
         "Settlement Position",
         "Collateral Position",
@@ -65,6 +66,9 @@ elif skill == "Risk Position":
     render()
 elif skill == "Distribución Gara BYMA":
     from skills.distribucion_gara.ui import render
+    render()
+elif skill == "Genera TXT Gara NASDAQ":
+    from skills.genera_txt_gara_nasdaq.ui import render
     render()
 elif skill == "Actual Position":
     from skills.actual_position.ui import render
