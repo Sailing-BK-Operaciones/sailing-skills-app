@@ -6,22 +6,25 @@ st.set_page_config(
     layout="wide"
 )
 
-# ── Estilos globales ──────────────────────────────────────────────────────────
+# ── Modo Day/Dark (persiste en session_state) ─────────────────────────────────
+if "dark_mode" not in st.session_state:
+    st.session_state.dark_mode = False
+
+dark = st.session_state.dark_mode
+
+# ── CSS base (siempre aplicado) ───────────────────────────────────────────────
 st.markdown("""
 <style>
-/* ── Fuente global ── */
 html, body, [class*="css"] {
     font-family: 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
 }
 
-/* ── Sidebar oscuro estilo plataforma financiera ── */
+/* ── Sidebar — siempre oscuro ── */
 section[data-testid="stSidebar"] {
     background: linear-gradient(180deg, #0d1b2a 0%, #142236 100%);
     border-right: 1px solid #1e3a5f;
 }
-section[data-testid="stSidebar"] * {
-    color: #dce8f5 !important;
-}
+section[data-testid="stSidebar"] * { color: #dce8f5 !important; }
 section[data-testid="stSidebar"] h1 {
     color: #ffffff !important;
     font-size: 1.1rem !important;
@@ -30,142 +33,81 @@ section[data-testid="stSidebar"] h1 {
     border-bottom: 1px solid #2a4a6e;
     margin-bottom: 0.8rem !important;
 }
-section[data-testid="stSidebar"] label {
-    color: #b8cfe8 !important;
-    font-size: 0.88rem !important;
-}
-/* Radio seleccionado */
+section[data-testid="stSidebar"] label { color: #b8cfe8 !important; font-size: 0.88rem !important; }
 section[data-testid="stSidebar"] [data-baseweb="radio"] [aria-checked="true"] ~ div {
-    color: #4fc3f7 !important;
-    font-weight: 600 !important;
+    color: #4fc3f7 !important; font-weight: 600 !important;
 }
-/* Alerts en sidebar */
 section[data-testid="stSidebar"] [data-testid="stAlert"] {
     background: rgba(255,255,255,0.06) !important;
     border: 1px solid rgba(255,255,255,0.12) !important;
     border-radius: 6px;
 }
 
-/* ── Área principal ── */
-.main .block-container {
-    padding-top: 1.2rem;
-    padding-bottom: 2rem;
-    max-width: 1200px;
-}
-
-/* ── Títulos ── */
-h1 {
-    color: #0d1b2a !important;
-    font-weight: 700 !important;
-    font-size: 1.6rem !important;
-    border-bottom: 2px solid #1565c0;
-    padding-bottom: 0.4rem;
-    margin-bottom: 0.6rem !important;
-}
-h2 {
-    color: #1a3a5c !important;
-    font-weight: 600 !important;
-    font-size: 1.15rem !important;
-}
-h3 {
-    color: #1565c0 !important;
-    font-weight: 600 !important;
-    font-size: 1rem !important;
-}
-
-/* ── Divider ── */
-hr {
-    border-color: #d0dae6 !important;
-    margin: 1rem 0 !important;
-}
-
-/* ── Métricas ── */
-[data-testid="stMetric"] {
-    background: #f0f5fb;
-    border-radius: 8px;
-    padding: 0.8rem 1rem !important;
-    border-left: 3px solid #1565c0;
-}
-[data-testid="stMetricLabel"] {
-    color: #546e7a !important;
-    font-size: 0.78rem !important;
-    font-weight: 600 !important;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-}
-[data-testid="stMetricValue"] {
-    color: #0d1b2a !important;
-    font-size: 1.35rem !important;
-    font-weight: 700 !important;
-}
+/* ── Layout ── */
+.main .block-container { padding-top: 1.2rem; padding-bottom: 2rem; max-width: 1200px; }
 
 /* ── Botones primarios ── */
 button[kind="primary"] {
-    background-color: #1565c0 !important;
-    border-color: #1565c0 !important;
-    font-weight: 600 !important;
-    letter-spacing: 0.02em;
-    border-radius: 6px !important;
+    background-color: #1565c0 !important; border-color: #1565c0 !important;
+    font-weight: 600 !important; letter-spacing: 0.02em; border-radius: 6px !important;
 }
-button[kind="primary"]:hover {
-    background-color: #0d47a1 !important;
-    border-color: #0d47a1 !important;
-}
-
-/* ── Botones de descarga ── */
-button[kind="secondary"] {
-    border-radius: 6px !important;
-    border-color: #1565c0 !important;
-    color: #1565c0 !important;
-}
-button[kind="secondary"]:hover {
-    background-color: #e3f0fc !important;
-}
+button[kind="primary"]:hover { background-color: #0d47a1 !important; border-color: #0d47a1 !important; }
 
 /* ── Alerts ── */
-[data-testid="stAlert"] {
-    border-radius: 6px !important;
-}
+[data-testid="stAlert"] { border-radius: 6px !important; }
+</style>
+""", unsafe_allow_html=True)
 
-/* ── Expanders ── */
-[data-testid="stExpander"] {
-    border: 1px solid #d0dae6 !important;
-    border-radius: 8px !important;
-}
-[data-testid="stExpander"] summary {
-    font-weight: 600;
-    color: #1a3a5c;
-}
-
-/* ── File uploader ── */
-[data-testid="stFileUploader"] {
-    border-radius: 8px !important;
-}
-[data-testid="stFileUploader"] section {
-    border-color: #90b4d8 !important;
-    border-radius: 8px !important;
-    background: #f7fbff !important;
-}
-[data-testid="stFileUploader"] section:hover {
-    border-color: #1565c0 !important;
-    background: #eef5fd !important;
-}
-
-/* ── Number input ── */
-[data-testid="stNumberInput"] input {
-    border-radius: 6px !important;
-}
-
-/* ── Date input ── */
-[data-testid="stDateInput"] input {
-    border-radius: 6px !important;
-}
-
-/* ── Captions ── */
-[data-testid="stCaptionContainer"] p {
-    color: #607d8b !important;
-    font-size: 0.8rem !important;
-}
+# ── CSS condicional Day / Dark ────────────────────────────────────────────────
+if not dark:
+    st.markdown("""
+<style>
+h1 { color: #0d1b2a !important; font-weight: 700 !important; font-size: 1.6rem !important;
+     border-bottom: 2px solid #1565c0; padding-bottom: 0.4rem; margin-bottom: 0.6rem !important; }
+h2 { color: #1a3a5c !important; font-weight: 600 !important; font-size: 1.15rem !important; }
+h3 { color: #1565c0 !important; font-weight: 600 !important; font-size: 1rem !important; }
+hr { border-color: #d0dae6 !important; margin: 1rem 0 !important; }
+[data-testid="stMetric"] { background: #f0f5fb; border-radius: 8px;
+    padding: 0.8rem 1rem !important; border-left: 3px solid #1565c0; }
+[data-testid="stMetricLabel"] { color: #546e7a !important; font-size: 0.78rem !important;
+    font-weight: 600 !important; text-transform: uppercase; letter-spacing: 0.04em; }
+[data-testid="stMetricValue"] { color: #0d1b2a !important; font-size: 1.35rem !important; font-weight: 700 !important; }
+button[kind="secondary"] { border-radius: 6px !important; border-color: #1565c0 !important; color: #1565c0 !important; }
+button[kind="secondary"]:hover { background-color: #e3f0fc !important; }
+[data-testid="stExpander"] { border: 1px solid #d0dae6 !important; border-radius: 8px !important; }
+[data-testid="stExpander"] summary { font-weight: 600; color: #1a3a5c; }
+[data-testid="stFileUploader"] { border-radius: 8px !important; }
+[data-testid="stFileUploader"] section { border-color: #90b4d8 !important; border-radius: 8px !important; background: #f7fbff !important; }
+[data-testid="stFileUploader"] section:hover { border-color: #1565c0 !important; background: #eef5fd !important; }
+[data-testid="stCaptionContainer"] p { color: #607d8b !important; font-size: 0.8rem !important; }
+</style>
+""", unsafe_allow_html=True)
+else:
+    st.markdown("""
+<style>
+.stApp, .main { background-color: #0f1724 !important; }
+.main .block-container { background-color: #0f1724 !important; }
+p, li, span, div { color: #dce8f5; }
+h1 { color: #e8f4ff !important; font-weight: 700 !important; font-size: 1.6rem !important;
+     border-bottom: 2px solid #4fc3f7; padding-bottom: 0.4rem; margin-bottom: 0.6rem !important; }
+h2 { color: #b8d4f0 !important; font-weight: 600 !important; font-size: 1.15rem !important; }
+h3 { color: #4fc3f7 !important; font-weight: 600 !important; font-size: 1rem !important; }
+hr { border-color: #2a3f5f !important; margin: 1rem 0 !important; }
+[data-testid="stMetric"] { background: #1a2535 !important; border-radius: 8px;
+    padding: 0.8rem 1rem !important; border-left: 3px solid #4fc3f7; }
+[data-testid="stMetricLabel"] { color: #7a9bc0 !important; font-size: 0.78rem !important;
+    font-weight: 600 !important; text-transform: uppercase; letter-spacing: 0.04em; }
+[data-testid="stMetricValue"] { color: #e8f4ff !important; font-size: 1.35rem !important; font-weight: 700 !important; }
+button[kind="secondary"] { border-radius: 6px !important; border-color: #4fc3f7 !important; color: #4fc3f7 !important; }
+button[kind="secondary"]:hover { background-color: rgba(79,195,247,0.1) !important; }
+[data-testid="stExpander"] { border: 1px solid #2a3f5f !important; border-radius: 8px !important; background: #1a2535 !important; }
+[data-testid="stExpander"] summary { font-weight: 600; color: #b8d4f0 !important; }
+[data-testid="stFileUploader"] { border-radius: 8px !important; }
+[data-testid="stFileUploader"] section { border-color: #2a4a6e !important; border-radius: 8px !important; background: #1a2535 !important; }
+[data-testid="stFileUploader"] section:hover { border-color: #4fc3f7 !important; background: #1e2f45 !important; }
+[data-testid="stCaptionContainer"] p { color: #7a9bc0 !important; font-size: 0.8rem !important; }
+input, textarea { background-color: #1a2535 !important; color: #dce8f5 !important; border-color: #2a4a6e !important; }
+[data-testid="stMarkdownContainer"] p { color: #dce8f5 !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -243,6 +185,13 @@ elif _n > 0:
     st.sidebar.warning(f"⚠ {_n}/{_total} archivos compartidos")
 else:
     st.sidebar.info("Sin archivos compartidos")
+
+# Toggle Day / Dark
+st.sidebar.divider()
+toggle_label = "☀️ Modo Día" if dark else "🌙 Modo Oscuro"
+if st.sidebar.button(toggle_label, use_container_width=True):
+    st.session_state.dark_mode = not dark
+    st.rerun()
 
 
 # ── Routing ───────────────────────────────────────────────────────────────────
