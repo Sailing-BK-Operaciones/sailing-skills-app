@@ -26,10 +26,13 @@ def check_password():
 if not check_password():
     st.stop()
 
+# ── Sidebar ──────────────────────────────────────────────────────────────────
 st.sidebar.title("Skills disponibles")
+
 skill = st.sidebar.radio(
     "Seleccioná la skill:",
     [
+        "Archivos Compartidos",
         "Risk Monitoring Client",
         "Risk Position",
         "Distribución Gara BYMA",
@@ -39,7 +42,22 @@ skill = st.sidebar.radio(
     ]
 )
 
-if skill == "Risk Monitoring Client":
+# Indicador de archivos compartidos cargados
+_SHARED_KEYS = ["shared_especies", "shared_accounts", "shared_pdf_aforos",
+                "shared_pc", "shared_sagaclte"]
+_n = sum(1 for k in _SHARED_KEYS if st.session_state.get(k))
+if _n == len(_SHARED_KEYS):
+    st.sidebar.success(f"✓ {_n}/{len(_SHARED_KEYS)} archivos compartidos")
+elif _n > 0:
+    st.sidebar.warning(f"⚠ {_n}/{len(_SHARED_KEYS)} archivos compartidos")
+else:
+    st.sidebar.info("Sin archivos compartidos")
+
+# ── Routing ───────────────────────────────────────────────────────────────────
+if skill == "Archivos Compartidos":
+    from shared_inputs import render
+    render()
+elif skill == "Risk Monitoring Client":
     from skills.risk_monitoring_client.ui import render
     render()
 elif skill == "Risk Position":

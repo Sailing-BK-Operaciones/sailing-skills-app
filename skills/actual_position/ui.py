@@ -1,6 +1,7 @@
 import streamlit as st
 import traceback
 from datetime import date
+from skills.shared_ui import shared_or_upload
 
 
 def render():
@@ -19,6 +20,7 @@ def render():
 
         **Opcionales (mejoran el reporte):**
         - `ESPECIES.XLS` — agrega el Código CVSA en la hoja de Movimientos por Especie
+          (se toma desde Archivos Compartidos si ya está cargado)
         - `saldos al inicio Nasdaq.csv` — muestra el Saldo proyectado del día en cada hoja de moneda
 
         La fecha de proceso por defecto es hoy. Si el CSV es de otro día, cambiala abajo.
@@ -36,9 +38,8 @@ def render():
     with st.expander("Archivos opcionales"):
         col3, col4 = st.columns(2)
         with col3:
-            especies_file = st.file_uploader(
-                "ESPECIES.XLS (para Código CVSA)",
-                type=["xls","xlsx"], key="ap_especies"
+            especies_file = shared_or_upload(
+                "shared_especies", "ESPECIES.XLS (para Código CVSA)", ["xls", "xlsx"], "ap_especies"
             )
         with col4:
             saldos_file = st.file_uploader(

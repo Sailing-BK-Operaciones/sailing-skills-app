@@ -1,5 +1,6 @@
 import streamlit as st
 import traceback
+from skills.shared_ui import shared_or_upload
 
 
 def render():
@@ -13,10 +14,10 @@ def render():
     with st.expander("Como usar esta skill"):
         st.markdown("""
         1. Descarga `table-riskPositions_*.csv` desde BYMA Clearing → Risk Positions
-        2. Descarga `table-accounts_*.csv` desde BYMA Clearing → Accounts
-        3. Subi el archivo **Saldos Gara a cubrir.xlsx** (el original de Gallo)
-        4. Hace clic en **Generar** — vas a descargar el Excel ya actualizado con las columnas E, F y H completas
+        2. Subi el archivo **Saldos Gara a cubrir.xlsx** (el original de Gallo)
+        3. Hace clic en **Generar** — vas a descargar el Excel ya actualizado con las columnas E, F y H completas
 
+        > `table-accounts_*.csv` se toma desde Archivos Compartidos si ya está cargado.
         > La fecha de proceso y el TC BYMA se leen automáticamente desde la celda C y G1 del Excel de Gallo.
         """)
 
@@ -27,9 +28,8 @@ def render():
             type=["csv"], key="rp_risk"
         )
     with col2:
-        csv_accounts = st.file_uploader(
-            "CSV de cuentas (table-accounts_*.csv)",
-            type=["csv"], key="rp_accounts"
+        csv_accounts = shared_or_upload(
+            "shared_accounts", "table-accounts_*.csv", ["csv"], "rp_accounts"
         )
 
     saldos_file = st.file_uploader(
@@ -40,9 +40,9 @@ def render():
     st.divider()
 
     faltantes = []
-    if not csv_risk:     faltantes.append("CSV Risk Position")
-    if not csv_accounts: faltantes.append("CSV de cuentas")
-    if not saldos_file:  faltantes.append("Saldos Gara a cubrir.xlsx")
+    if not csv_risk:      faltantes.append("CSV Risk Position")
+    if not csv_accounts:  faltantes.append("table-accounts_*.csv")
+    if not saldos_file:   faltantes.append("Saldos Gara a cubrir.xlsx")
 
     if faltantes:
         st.info(f"Faltan: {', '.join(faltantes)}")
