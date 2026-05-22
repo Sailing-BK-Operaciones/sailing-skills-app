@@ -229,7 +229,9 @@ def _leer_precios(pc_file):
     if pc_file is None:
         return precios
     wb = xlrd.open_workbook(file_contents=pc_file.read())
-    sh = wb.sheet_by_name("Precios_de_Cierre")
+    sh = (wb.sheet_by_name("Precios_de_Cierre")
+          if "Precios_de_Cierre" in wb.sheet_names()
+          else wb.sheet_by_index(0))
     for i in range(1, sh.nrows):
         row = sh.row_values(i)
         esp = str(row[0]).strip().strip("'")

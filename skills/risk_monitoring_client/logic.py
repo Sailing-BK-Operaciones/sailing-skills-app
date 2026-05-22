@@ -79,7 +79,9 @@ def generar_reporte(
     # ── Precios de cierre (PC*.XLS) ───────────────────────────────────────────
     precios = {}
     wb_pc = xlrd.open_workbook(file_contents=pc_file.read())
-    ws_pc = wb_pc.sheet_by_name("Precios_de_Cierre")
+    ws_pc = (wb_pc.sheet_by_name("Precios_de_Cierre")
+             if "Precios_de_Cierre" in wb_pc.sheet_names()
+             else wb_pc.sheet_by_index(0))
     for r in range(1, ws_pc.nrows):
         especie_str = str(ws_pc.cell_value(r, 0)).strip()
         code5 = especie_str[:5].strip().lstrip("'").zfill(5)

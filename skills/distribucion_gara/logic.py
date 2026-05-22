@@ -315,7 +315,9 @@ def generar_reporte(
     # ── STEP 8: Precios de Cierre ────────────────────────────────────────────────
     pc_file.seek(0)
     wb_pc = xlrd.open_workbook(file_contents=pc_file.read())
-    sh_pc = wb_pc.sheet_by_name("Precios_de_Cierre")
+    sh_pc = (wb_pc.sheet_by_name("Precios_de_Cierre")
+             if "Precios_de_Cierre" in wb_pc.sheet_names()
+             else wb_pc.sheet_by_index(0))
     precios = {}
     for r in range(1, sh_pc.nrows):
         row = sh_pc.row_values(r)
