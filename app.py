@@ -225,8 +225,10 @@ def check_password():
             return False
 
         restantes = MAX_INTENTOS - st.session_state.failed_attempts
-        password = st.text_input("Contraseña:", type="password")
-        if st.button("Ingresar"):
+        with st.form("login_form"):
+            password = st.text_input("Contraseña:", type="password")
+            submitted = st.form_submit_button("Ingresar", use_container_width=True)
+        if submitted:
             if password == st.secrets["PASSWORD"]:
                 st.session_state.authenticated = True
                 st.session_state.failed_attempts = 0
@@ -258,9 +260,9 @@ OP_SKILLS = [
     "Arreglos Garantías",
     "Control Aforos BYMA",
     "Conversión Dólares Renta",
-    "Tesorería",
 ]
 GEST_SKILLS = [
+    "Tesorería",
     "Reporte Operativo",
 ]
 SUSP_SKILLS = [
@@ -291,6 +293,23 @@ if _hcol_toggle.button("☀️" if dark else "🌙", key="_toggle_dark",
                        help="Modo Día / Modo Oscuro"):
     st.session_state.dark_mode = not dark
     st.rerun()
+
+# ── Indicador de archivos compartidos (siempre visible, antes de los grupos) ─
+from shared_store import is_loaded as _is_loaded
+_SHARED_KEYS = [
+    "shared_pc", "shared_sagaclte", "shared_sateclte", "shared_contbole",
+    "shared_saldos_nasdaq", "shared_especies", "shared_accounts",
+    "shared_pdf_aforos", "shared_aforo_sail", "shared_tabcompb",
+]
+_n = sum(1 for k in _SHARED_KEYS if _is_loaded(k))
+_total = len(_SHARED_KEYS)
+if _n == _total:
+    st.sidebar.success(f"✓ {_n}/{_total} archivos compartidos")
+elif _n > 0:
+    st.sidebar.warning(f"⚠ {_n}/{_total} archivos compartidos")
+else:
+    st.sidebar.info("Sin archivos compartidos")
+st.sidebar.divider()
 
 # ── Grupo 1: abierto por defecto ──
 with st.sidebar.expander("⚙ OPERATIVAS / GARANTÍAS", expanded=True, key="exp_op"):
@@ -327,23 +346,6 @@ if new_skill:
     st.rerun()
 
 skill = st.session_state.active_skill
-
-# ── Indicador de archivos compartidos ────────────────────────────────────────
-from shared_store import is_loaded as _is_loaded
-_SHARED_KEYS = [
-    "shared_pc", "shared_sagaclte", "shared_sateclte", "shared_contbole",
-    "shared_saldos_nasdaq", "shared_especies", "shared_accounts",
-    "shared_pdf_aforos", "shared_aforo_sail", "shared_tabcompb",
-]
-_n = sum(1 for k in _SHARED_KEYS if _is_loaded(k))
-_total = len(_SHARED_KEYS)
-st.sidebar.divider()
-if _n == _total:
-    st.sidebar.success(f"✓ {_n}/{_total} archivos compartidos")
-elif _n > 0:
-    st.sidebar.warning(f"⚠ {_n}/{_total} archivos compartidos")
-else:
-    st.sidebar.info("Sin archivos compartidos")
 
 
 
