@@ -10,7 +10,8 @@ _KEY = "tes_months"
 def render():
     st.title("Tesorería — Reporte de Gestión")
     st.markdown(
-        "Procesa archivos **MOVICTA** (XLS de Gallo) y genera el reporte mensual de Tesorería: "
+        "Procesa archivos **MOVICTA** (XLS de ARS, MEP y USD de Gallo) y actualiza el reporte "
+        "Excel acumulativo anual de Tesorería con los datos del mes seleccionado: "
         "Panel de Control, Análisis de Mercados, Análisis de Clientes, Ranking, "
         "Detalle ARS y Detalle USD."
     )
