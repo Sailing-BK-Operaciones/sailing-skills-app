@@ -96,6 +96,27 @@ section[data-testid="stSidebar"] textarea::placeholder {
     color: #7a9bc0 !important;
 }
 
+/* ── Botón de formulario en sidebar (Guardar usuario) ── */
+section[data-testid="stSidebar"] [data-testid="stFormSubmitButton"] > button,
+section[data-testid="stSidebar"] button[kind="primaryFormSubmit"] {
+    background-color: #1565c0 !important;
+    color: #ffffff !important;
+    border-color: #1565c0 !important;
+    font-weight: 600 !important;
+    opacity: 1 !important;
+}
+section[data-testid="stSidebar"] [data-testid="stFormSubmitButton"] > button:hover,
+section[data-testid="stSidebar"] button[kind="primaryFormSubmit"]:hover {
+    background-color: #0d47a1 !important;
+    border-color: #0d47a1 !important;
+}
+
+/* ── Labels de inputs dentro del sidebar ── */
+section[data-testid="stSidebar"] [data-testid="stWidgetLabel"] p {
+    color: #b8d4f0 !important;
+    font-size: 0.8rem !important;
+}
+
 /* ── Botón toggle tema: compacto en header del sidebar ── */
 section[data-testid="stSidebar"] button[kind="secondary"] {
     padding: 0.12rem 0.32rem !important;

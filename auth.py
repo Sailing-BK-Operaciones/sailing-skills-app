@@ -92,10 +92,20 @@ def render_admin_panel() -> None:
         # ── Lista de usuarios actuales ────────────────────────────────────────
         usernames = get_usernames()
         if usernames:
-            st.markdown("**Usuarios activos:**")
+            st.markdown(
+                '<p style="color:#cce8f8;font-size:0.82rem;font-weight:700;'
+                'margin:0 0 0.4rem 0;">Usuarios activos:</p>',
+                unsafe_allow_html=True,
+            )
             for uname in usernames:
                 col_u, col_del = st.columns([4, 1])
-                col_u.markdown(f"• `{uname}`")
+                col_u.markdown(
+                    f'<p style="color:#e8f4ff;font-size:0.82rem;'
+                    f'margin:0.15rem 0;padding:0.2rem 0.4rem;'
+                    f'background:#1e3a5f;border-radius:4px;'
+                    f'border:1px solid #3a6a9f;">• {uname}</p>',
+                    unsafe_allow_html=True,
+                )
                 if col_del.button(
                     "✕", key=f"_del_usr_{uname}",
                     help=f"Eliminar usuario {uname}",
@@ -103,12 +113,20 @@ def render_admin_panel() -> None:
                     remove_user(uname)
                     st.rerun()
         else:
-            st.caption("Sin usuarios del equipo configurados.")
+            st.markdown(
+                '<p style="color:#7a9bc0;font-size:0.8rem;font-style:italic;">'
+                'Sin usuarios del equipo configurados.</p>',
+                unsafe_allow_html=True,
+            )
 
         st.divider()
 
         # ── Formulario alta / modificación ───────────────────────────────────
-        st.markdown("**Agregar / modificar usuario:**")
+        st.markdown(
+            '<p style="color:#cce8f8;font-size:0.82rem;font-weight:700;'
+            'margin:0 0 0.4rem 0;">Agregar / modificar usuario:</p>',
+            unsafe_allow_html=True,
+        )
         with st.form("_admin_add_user", clear_on_submit=True):
             new_uname = st.text_input(
                 "Nombre de usuario",
@@ -116,7 +134,11 @@ def render_admin_panel() -> None:
             )
             new_pass  = st.text_input("Contraseña", type="password")
             new_pass2 = st.text_input("Repetir contraseña", type="password")
-            guardar   = st.form_submit_button("Guardar usuario", use_container_width=True)
+            guardar   = st.form_submit_button(
+                "Guardar usuario",
+                use_container_width=True,
+                type="primary",
+            )
 
         if guardar:
             if new_pass != new_pass2:
@@ -127,14 +149,16 @@ def render_admin_panel() -> None:
                     st.error(err)
                 else:
                     action = "modificado" if new_uname.strip().lower() in get_usernames() else "creado"
-                    st.success(f"✓ Usuario `{new_uname.strip().lower()}` {action}.")
+                    st.success(f"✓ Usuario '{new_uname.strip().lower()}' {action}.")
                     st.rerun()
 
         # ── Nota de persistencia ─────────────────────────────────────────────
-        st.caption(
+        st.markdown(
+            '<p style="color:#7a9bc0;font-size:0.72rem;margin-top:0.6rem;'
+            'line-height:1.4;">'
             "⚠ Los cambios hechos acá persisten en memoria del servidor "
-            "hasta el próximo redeploy de la app. "
-            "Para usuarios permanentes (que sobrevivan redeploys), "
-            "agregalos también en la sección `[USERS]` de los Secrets "
-            "en el dashboard de Streamlit Cloud."
+            "hasta el próximo redeploy. Para usuarios permanentes, "
+            "agregalos en la sección [USERS] de los Secrets de Streamlit Cloud."
+            "</p>",
+            unsafe_allow_html=True,
         )
