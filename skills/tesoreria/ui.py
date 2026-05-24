@@ -195,15 +195,55 @@ def render():
 
     st.subheader(f"Generar reporte — {n_meses} mes(es): {meses_label}")
 
+    base_file = st.file_uploader(
+        "Reporte base (XLSX) — opcional",
+        type=["xlsx"],
+        key="tes_base",
+        help=(
+            "Si subís el reporte del mes anterior, los nuevos meses se agregan al existente. "
+            "Sin archivo base, se genera un reporte nuevo desde cero con los meses cargados en sesión."
+        ),
+    )
+
+    if base_file:
+        st.info(
+            f"Modo **actualización**: se agregarán {n_meses} mes(es) al reporte base "
+            f"«{base_file.name}».",
+            icon="📎",
+        )
+    else:
+        st.info(
+            f"Modo **nuevo reporte**: se generará desde cero con {n_meses} mes(es).",
+            icon="📄",
+        )
+
     if st.button("Generar reporte Excel", type="primary", use_container_width=True):
         with st.spinner("Generando Excel..."):
             try:
-                from skills.tesoreria.logic import generar_reporte
-                xlsx_bytes = generar_reporte(months_ordered)
+                if base_file:
+                    # ── Patrón update: agregar mes a mes al reporte existente ──
+                    from skills.tesoreria.logic import agregar_mes
+                    xlsx_bytes = base_file.read()
+                    for mes_name, entry in months_ordered.items():
+                        with st.spinner(f"Agregando {mes_name}..."):
+                            xlsx_bytes = agregar_mes(
+                                existing_bytes = xlsx_bytes,
+                                mes_name       = mes_name,
+                                df_mes         = entry["df"],
+                                tc_mep         = entry["tc_mep"],
+                                tc_ccl         = entry["tc_ccl"],
+                            )
+                    fname = base_file.name  # conservar nombre del base
+                else:
+                    # ── Patrón nuevo: generar desde cero ─────────────────────
+                    from skills.tesoreria.logic import generar_reporte
+                    xlsx_bytes = generar_reporte(months_ordered)
+                    fname = f"Reporte_Tesoreria_{datetime.now().strftime('%b%Y')}.xlsx"
 
-                fname = f"Reporte_Tesoreria_{datetime.now().strftime('%b%Y')}.xlsx"
-
-                st.success(f"✓ Reporte generado con {n_meses} mes(es).")
+                st.success(
+                    f"✓ Reporte {'actualizado' if base_file else 'generado'} "
+                    f"con {n_meses} mes(es): {meses_label}."
+                )
 
                 # Métricas globales
                 total_ops = sum(
@@ -215,7 +255,7 @@ def render():
                     for v in months_ordered.values()
                 )
                 c1, c2, c3 = st.columns(3)
-                c1.metric("Meses incluidos",  n_meses)
+                c1.metric("Meses incluidos",    n_meses)
                 c2.metric("Operaciones válidas", total_ops)
                 c3.metric("Anulaciones excluidas", total_err)
 

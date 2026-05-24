@@ -740,3 +740,347 @@ def generar_reporte(months_dict):
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
+
+
+# ─── Agregar mes a reporte existente ───────────────────────────────────────────
+def agregar_mes(existing_bytes, mes_name, df_mes, tc_mep, tc_ccl):
+    """
+    Agrega un mes nuevo a un reporte de Tesorería existente (patrón update).
+    existing_bytes : bytes del XLSX base
+    mes_name       : nombre del mes a agregar (ej. 'Mayo')
+    df_mes         : DataFrame del mes (output de procesar_mes)
+    tc_mep, tc_ccl : tipos de cambio del mes
+    Retorna bytes del XLSX actualizado.
+    """
+    from openpyxl import load_workbook
+    from copy import copy as _copy_obj
+
+    wb         = load_workbook(io.BytesIO(existing_bytes))
+    tc_ccl_val = tc_ccl or 0
+    today      = datetime.now().strftime('%d/%m/%Y')
+
+    # Actualizar "Generado:" en todas las hojas
+    for sh in wb.sheetnames:
+        c = wb[sh].cell(3, 1)
+        if c.value and 'Generado:' in str(c.value):
+            c.value = (
+                f"Consolidado AR$ + U$D MEP (TC MEP) + U$D CABLE (TC CCL) | "
+                f"Generado: {today}"
+            )
+
+    # ── helpers locales ───────────────────────────────────────────────────────
+    def _copy_style(ws, src_row, dst_row, ncols):
+        for col in range(1, ncols + 1):
+            src = ws.cell(src_row, col)
+            dst = ws.cell(dst_row, col)
+            if src.has_style:
+                dst.font          = _copy_obj(src.font)
+                dst.fill          = _copy_obj(src.fill)
+                dst.border        = _copy_obj(src.border)
+                dst.alignment     = _copy_obj(src.alignment)
+                dst.number_format = src.number_format
+
+    def _find_total(ws, start=9):
+        for r in range(start, ws.max_row + 1):
+            v = ws.cell(r, 1).value
+            if v and 'TOTAL ACUMULADO' in str(v).upper():
+                return r
+        return None
+
+    # ── 1. Panel de Control ───────────────────────────────────────────────────
+    ws_p = wb.get('Panel de Control')
+    if ws_p is not None:
+        stats_c, neto_c = _calc_panel_row(df_mes, 'Cliente')
+        stats_m, neto_m = _calc_panel_row(df_mes, 'Mercado')
+
+        pct_cols   = {4, 5, 8, 9}   # 1-indexed
+        money_cols = {3, 7, 10}
+
+        def _write_panel_row(ws, row, stats, neto, include_tc):
+            vals = [
+                mes_name,
+                stats['Ingreso']['cant'],  stats['Ingreso']['monto'],
+                stats['Ingreso']['pct_hb']  / 100, stats['Ingreso']['pct_man'] / 100,
+                stats['Egreso']['cant'],   stats['Egreso']['monto'],
+                stats['Egreso']['pct_hb']  / 100,  stats['Egreso']['pct_man'] / 100,
+                neto,
+                stats['Ingreso']['errores'], stats['Egreso']['errores'],
+                tc_mep     if include_tc else None,
+                tc_ccl_val if include_tc else None,
+            ]
+            for ci, val in enumerate(vals, start=1):
+                c = ws.cell(row, ci)
+                c.value = val
+                if val is None:
+                    continue
+                if ci in pct_cols:    c.number_format = '0.0%'
+                elif ci in money_cols: c.number_format = '#,##0'
+                elif ci in {13, 14}:  c.number_format = '"$"#,##0.00'
+
+        def _recalc_total(ws, data_start, data_end, total_row):
+            for col in range(2, 13):
+                vals = [ws.cell(r, col).value
+                        for r in range(data_start, data_end + 1)
+                        if isinstance(ws.cell(r, col).value, (int, float))]
+                if vals:
+                    if col in (4, 5, 8, 9):
+                        ws.cell(total_row, col).value = sum(vals) / len(vals)
+                    elif col not in (13, 14):
+                        ws.cell(total_row, col).value = sum(vals)
+
+        def _insert_section(ws, stats, neto, include_tc, search_from=9):
+            tot = _find_total(ws, start=search_from)
+            if not tot:
+                return None
+            data_start = next(
+                (r for r in range(search_from, tot)
+                 if isinstance(ws.cell(r, 2).value, (int, float))),
+                None
+            )
+            ws.insert_rows(tot)
+            _copy_style(ws, tot - 1, tot, 14)
+            _write_panel_row(ws, tot, stats, neto, include_tc)
+            new_tot = tot + 1
+            if data_start:
+                _recalc_total(ws, data_start, tot, new_tot)
+            return new_tot
+
+        new_tot_c = _insert_section(ws_p, stats_c, neto_c, include_tc=True)
+        if new_tot_c:
+            _insert_section(ws_p, stats_m, neto_m, include_tc=False,
+                            search_from=new_tot_c + 1)
+
+    # ── 2. Análisis de Mercados ───────────────────────────────────────────────
+    ws_merc = wb.get('Análisis de Mercados')
+    if ws_merc is not None:
+        r    = ws_merc.max_row + 2
+        df_m = df_mes[df_mes['EsMercado']]
+        _merge_set(ws_merc, f'A{r}:I{r}', f'▌  {mes_name.upper()}',
+                   bg=COLORS['azul_oscuro'],
+                   fnt=_font(bold=True, color=COLORS['blanco'], size=10),
+                   aln=_align('left'))
+        ws_merc.row_dimensions[r].height = 20;  r += 1
+        for col_offset, tipo in [(0, 'Ingreso'), (5, 'Egreso')]:
+            bg_c = COLORS['verde'] if tipo == 'Ingreso' else COLORS['rojo']
+            t1 = get_column_letter(1 + col_offset)
+            t2 = get_column_letter(4 + col_offset)
+            _merge_set(ws_merc, f'{t1}{r}:{t2}{r}', f'{tipo}s por Mercado', bg=bg_c,
+                       fnt=_font(bold=True, color=COLORS['blanco']), aln=_align())
+        r += 1
+        for col_offset in [0, 5]:
+            for ci, h in enumerate(['Mercado', 'Cant.', 'Monto AR$', '%']):
+                c = ws_merc[f'{get_column_letter(1+col_offset+ci)}{r}']
+                c.value = h;  c.fill = _fill(COLORS['azul_prim'])
+                c.font  = _font(bold=True, color=COLORS['blanco'], size=9)
+                c.alignment = _align();  c.border = _border()
+        r += 1
+        data_start = r;  max_rows = 0
+        for tipo, col_offset in [('Ingreso', 0), ('Egreso', 5)]:
+            sub         = df_m[df_m['Tipo'] == tipo]
+            total_monto = sub['Importe_ARS'].sum()
+            grouped = (sub.groupby('Clte')
+                       .agg(Nombre=('Nombre','first'), Cant=('Importe_ARS','count'),
+                            Monto=('Importe_ARS','sum'))
+                       .reset_index())
+            grouped['NombreMerc'] = grouped['Clte'].apply(
+                lambda x: MERCADOS.get(int(x), f'{int(x)} (desconocido)'))
+            for ri, (_, rr) in enumerate(grouped.iterrows()):
+                row = data_start + ri
+                bg  = COLORS['gris_fila'] if ri % 2 == 0 else COLORS['blanco']
+                pct = rr['Monto'] / total_monto if total_monto > 0 else 0
+                for ci, val in enumerate([rr['NombreMerc'], rr['Cant'], rr['Monto'], pct]):
+                    c = ws_merc[f'{get_column_letter(1+col_offset+ci)}{row}']
+                    c.value = val;  c.fill = _fill(bg)
+                    c.font  = _font(size=9);  c.alignment = _align();  c.border = _border()
+                    if ci == 2: c.number_format = '#,##0'
+                    elif ci == 3: c.number_format = '0.0%'
+            max_rows = max(max_rows, len(grouped))
+
+    # ── 3. Análisis de Clientes ───────────────────────────────────────────────
+    ws_cli = wb.get('Análisis de Clientes')
+    if ws_cli is not None:
+        r      = ws_cli.max_row + 2
+        df_cli = df_mes[(df_mes['EsMercado'] == False) & (df_mes['Canal'] != 'Anulacion')]
+        _merge_set(ws_cli, f'A{r}:N{r}', f'▌  {mes_name.upper()}',
+                   bg=COLORS['azul_oscuro'],
+                   fnt=_font(bold=True, color=COLORS['blanco'], size=10), aln=_align('left'))
+        ws_cli.row_dimensions[r].height = 20;  r += 1
+        _merge_set(ws_cli, f'A{r}:E{r}', 'INGRESOS',
+                   bg=COLORS['verde'], fnt=_font(bold=True, color=COLORS['blanco']), aln=_align())
+        _merge_set(ws_cli, f'G{r}:K{r}', 'EGRESOS',
+                   bg=COLORS['rojo'],  fnt=_font(bold=True, color=COLORS['blanco']), aln=_align())
+        _merge_set(ws_cli, f'M{r}:N{r}', 'NETO',
+                   bg=COLORS['azul_oscuro'], fnt=_font(bold=True, color=COLORS['blanco']), aln=_align())
+        ws_cli.row_dimensions[r].height = 16;  r += 1
+        for col_offset in [0, 6]:
+            for ci, h in enumerate(['Canal', 'Cant.', 'Monto AR$', 'Ticket Prom.', '%']):
+                c = ws_cli[f'{get_column_letter(1+col_offset+ci)}{r}']
+                c.value = h;  c.fill = _fill(COLORS['azul_prim'])
+                c.font  = _font(bold=True, color=COLORS['blanco'], size=9)
+                c.alignment = _align();  c.border = _border()
+        for col, lbl in [('M', 'Neto Cant.'), ('N', 'Neto Monto AR$')]:
+            c = ws_cli[f'{col}{r}']
+            c.value = lbl;  c.fill = _fill(COLORS['azul_prim'])
+            c.font = _font(bold=True, color=COLORS['blanco'], size=9)
+            c.alignment = _align(wrap=True);  c.border = _border()
+        ws_cli.row_dimensions[r].height = 28;  r += 1
+        canales = ['Digital', 'Manual']
+        if (df_cli['Canal'] == 'eCheq').any():
+            canales.append('eCheq')
+        data_start = r
+        canal_stats = {}
+        total_ing_cant = total_ing_monto = total_egr_cant = total_egr_monto = 0
+        for canal in canales:
+            canal_stats[canal] = {}
+            for tipo in ['Ingreso', 'Egreso']:
+                sub = df_cli[(df_cli['Canal'] == canal) & (df_cli['Tipo'] == tipo)]
+                canal_stats[canal][tipo] = {'cant': len(sub), 'monto': sub['Importe_ARS'].sum()}
+            total_ing_cant  += canal_stats[canal]['Ingreso']['cant']
+            total_ing_monto += canal_stats[canal]['Ingreso']['monto']
+            total_egr_cant  += canal_stats[canal]['Egreso']['cant']
+            total_egr_monto += canal_stats[canal]['Egreso']['monto']
+        for ri, canal in enumerate(canales):
+            row = data_start + ri
+            bg  = COLORS['gris_fila'] if ri % 2 == 0 else COLORS['blanco']
+            ing = canal_stats[canal]['Ingreso']
+            egr = canal_stats[canal]['Egreso']
+            neto_cant  = ing['cant']  - egr['cant']
+            neto_monto = ing['monto'] - egr['monto']
+            ticket_ing = ing['monto'] / ing['cant'] if ing['cant'] > 0 else 0
+            ticket_egr = egr['monto'] / egr['cant'] if egr['cant'] > 0 else 0
+            pct_ing = ing['cant'] / total_ing_cant if total_ing_cant > 0 else 0
+            pct_egr = egr['cant'] / total_egr_cant if total_egr_cant > 0 else 0
+            for ci, val in enumerate([canal, ing['cant'], ing['monto'], ticket_ing, pct_ing]):
+                c = ws_cli[f'{get_column_letter(1+ci)}{row}']
+                c.value = val;  c.fill = _fill(bg);  c.font = _font(size=9)
+                c.alignment = _align();  c.border = _border()
+                if ci in {2, 3}: c.number_format = '#,##0'
+                elif ci == 4:    c.number_format = '0.0%'
+            for ci, val in enumerate([canal, egr['cant'], egr['monto'], ticket_egr, pct_egr]):
+                c = ws_cli[f'{get_column_letter(7+ci)}{row}']
+                c.value = val;  c.fill = _fill(bg);  c.font = _font(size=9)
+                c.alignment = _align();  c.border = _border()
+                if ci in {2, 3}: c.number_format = '#,##0'
+                elif ci == 4:    c.number_format = '0.0%'
+            neto_color = COLORS['verde'] if neto_monto >= 0 else COLORS['rojo']
+            for col, val, fmt in [('M', neto_cant, '#,##0'), ('N', neto_monto, '#,##0')]:
+                c = ws_cli[f'{col}{row}']
+                c.value = val;  c.fill = _fill(bg)
+                c.font  = _font(bold=True, color=neto_color, size=9)
+                c.alignment = _align();  c.border = _border()
+                c.number_format = fmt
+
+    # ── 4. Ranking Clientes ───────────────────────────────────────────────────
+    ws_rank = wb.get('Ranking Clientes')
+    if ws_rank is not None:
+        r       = ws_rank.max_row + 2
+        df_cli_r = df_mes[df_mes['EsMercado'] == False]
+        _merge_set(ws_rank, f'A{r}:K{r}', f'▌  {mes_name.upper()}',
+                   bg=COLORS['azul_oscuro'],
+                   fnt=_font(bold=True, color=COLORS['blanco'], size=10), aln=_align('left'))
+        ws_rank.row_dimensions[r].height = 20;  r += 1
+        for c_start, c_end, label, bg_c in [
+            ('A', 'E', 'TOP 20 INGRESOS', COLORS['verde']),
+            ('G', 'K', 'TOP 20 EGRESOS',  COLORS['rojo']),
+        ]:
+            _merge_set(ws_rank, f'{c_start}{r}:{c_end}{r}', label,
+                       bg=bg_c, fnt=_font(bold=True, color=COLORS['blanco']), aln=_align())
+        ws_rank.row_dimensions[r].height = 16;  r += 1
+        for col_offset in [0, 6]:
+            for ci, h in enumerate(['Rank', 'Comitente', 'Nombre', 'Monto AR$', 'Cant. Ops']):
+                c = ws_rank[f'{get_column_letter(1+col_offset+ci)}{r}']
+                c.value = h
+                c.fill  = _fill(COLORS['azul_oscuro'] if ci == 0 else COLORS['azul_prim'])
+                c.font  = _font(bold=True, color=COLORS['blanco'], size=9)
+                c.alignment = _align();  c.border = _border()
+        ws_rank.row_dimensions[r].height = 15;  r += 1
+        data_start = r
+        for tipo, col_offset in [('Ingreso', 0), ('Egreso', 6)]:
+            sub = df_cli_r[(df_cli_r['Tipo'] == tipo) & (df_cli_r['Canal'] != 'Anulacion')]
+            grouped = (sub.groupby(['Clte', 'Nombre'])
+                       .agg(Monto=('Importe_ARS', 'sum'), CantOps=('Importe_ARS', 'count'))
+                       .reset_index()
+                       .sort_values('Monto', ascending=False)
+                       .head(20))
+            for ri, (_, rr) in enumerate(grouped.iterrows()):
+                row = data_start + ri
+                bg  = COLORS['gris_fila'] if ri % 2 == 0 else COLORS['blanco']
+                for ci, val in enumerate([ri+1, int(rr['Clte']), rr['Nombre'],
+                                          rr['Monto'], int(rr['CantOps'])]):
+                    c = ws_rank[f'{get_column_letter(1+col_offset+ci)}{row}']
+                    c.value = val;  c.fill = _fill(bg)
+                    c.font  = _font(bold=(ci == 0),
+                                    color=COLORS['azul_oscuro'] if ci == 0 else COLORS['negro'],
+                                    size=9)
+                    c.alignment = _align('left' if ci == 2 else 'center')
+                    c.border = _border()
+                    if ci == 3: c.number_format = '#,##0'
+
+    # ── 5. Detalle ARS ────────────────────────────────────────────────────────
+    ws_dars = wb.get('Detalle ARS')
+    if ws_dars is not None:
+        r      = ws_dars.max_row + 2
+        df_ars = df_mes[df_mes['Moneda'] == 'ARS']
+        _merge_set(ws_dars, f'A{r}:G{r}', f'▌  {mes_name.upper()}',
+                   bg=COLORS['azul_oscuro'],
+                   fnt=_font(bold=True, color=COLORS['blanco'], size=10), aln=_align('left'))
+        ws_dars.row_dimensions[r].height = 20;  r += 1
+        headers = ['Comitente', 'Nombre', 'Comprobante', 'Fecha', 'Referencia', 'Importe', 'Canal']
+        for ci, h in enumerate(headers):
+            c = ws_dars[f'{get_column_letter(ci+1)}{r}']
+            c.value = h;  c.fill = _fill(COLORS['azul_prim'])
+            c.font  = _font(bold=True, color=COLORS['blanco'], size=9)
+            c.alignment = _align();  c.border = _border()
+        ws_dars.row_dimensions[r].height = 15;  r += 1
+        canal_colors = {'Digital': COLORS['azul_prim'], 'Manual': COLORS['negro'],
+                        'eCheq': 'D4780A', 'Anulacion': COLORS['rojo']}
+        for ri, (_, rd) in enumerate(df_ars.iterrows()):
+            bg   = COLORS['gris_fila'] if ri % 2 == 0 else COLORS['blanco']
+            vals = [int(rd['Clte']), rd['Nombre'], rd['Cpbte'],
+                    rd['Fecha'],     rd['Referencia'], rd['Importe_abs'], rd['Canal']]
+            for ci, val in enumerate(vals):
+                c = ws_dars[f'{get_column_letter(ci+1)}{r}']
+                c.value = val;  c.fill = _fill(bg)
+                c.font  = _font(size=8,
+                                color=canal_colors.get(rd['Canal'], COLORS['negro']) if ci == 6
+                                else COLORS['negro'])
+                c.alignment = _align('left' if ci in {1, 4, 6} else 'center')
+                c.border = _border()
+                if ci == 5: c.number_format = '#,##0'
+            r += 1
+
+    # ── 6. Detalle USD ────────────────────────────────────────────────────────
+    ws_dusd = wb.get('Detalle USD')
+    if ws_dusd is not None:
+        r      = ws_dusd.max_row + 2
+        df_usd = df_mes[df_mes['Moneda'] == 'USD']
+        _merge_set(ws_dusd, f'A{r}:I{r}', f'▌  {mes_name.upper()}',
+                   bg=COLORS['azul_oscuro'],
+                   fnt=_font(bold=True, color=COLORS['blanco'], size=10), aln=_align('left'))
+        ws_dusd.row_dimensions[r].height = 20;  r += 1
+        headers_usd = ['Comitente', 'Nombre', 'Comprobante', 'Fecha', 'Referencia',
+                       'Importe USD', 'Canal', 'Tipo USD', 'Importe ARS']
+        for ci, h in enumerate(headers_usd):
+            c = ws_dusd[f'{get_column_letter(ci+1)}{r}']
+            c.value = h;  c.fill = _fill(COLORS['azul_prim'])
+            c.font  = _font(bold=True, color=COLORS['blanco'], size=9)
+            c.alignment = _align();  c.border = _border()
+        ws_dusd.row_dimensions[r].height = 15;  r += 1
+        for ri, (_, rd) in enumerate(df_usd.iterrows()):
+            bg        = COLORS['gris_fila'] if ri % 2 == 0 else COLORS['blanco']
+            usd_color = COLORS['azul_tc'] if rd.get('TipoUSD') == 'MEP' else COLORS['violeta']
+            vals = [int(rd['Clte']), rd['Nombre'], rd['Cpbte'], rd['Fecha'],
+                    rd['Referencia'], rd['Importe_abs'], rd['Canal'],
+                    rd.get('TipoUSD', ''), rd['Importe_ARS']]
+            for ci, val in enumerate(vals):
+                c = ws_dusd[f'{get_column_letter(ci+1)}{r}']
+                c.value = val;  c.fill = _fill(bg)
+                c.font  = _font(size=8, color=usd_color if ci == 7 else COLORS['negro'])
+                c.alignment = _align('left' if ci in {1, 4, 6, 7} else 'center')
+                c.border = _border()
+                if ci in {5, 8}: c.number_format = '#,##0'
+            r += 1
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
