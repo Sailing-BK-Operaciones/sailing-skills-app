@@ -55,6 +55,38 @@ button[kind="primary"]:hover { background-color: #0d47a1 !important; border-colo
 
 /* ── Alerts ── */
 [data-testid="stAlert"] { border-radius: 6px !important; }
+
+/* ── Expanders dentro del sidebar ── */
+section[data-testid="stSidebar"] [data-testid="stExpander"] {
+    border: 1px solid #1e3a5f !important;
+    border-radius: 6px !important;
+    background: rgba(255,255,255,0.04) !important;
+    margin-bottom: 0.35rem !important;
+}
+section[data-testid="stSidebar"] [data-testid="stExpander"] summary {
+    color: #4fc3f7 !important;
+    font-size: 0.74rem !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.07em !important;
+    padding: 0.35rem 0.55rem !important;
+    text-transform: uppercase;
+}
+section[data-testid="stSidebar"] details > summary svg { fill: #4fc3f7 !important; }
+
+/* ── Botón toggle tema: compacto en header del sidebar ── */
+section[data-testid="stSidebar"] button[kind="secondary"] {
+    padding: 0.12rem 0.32rem !important;
+    font-size: 0.95rem !important;
+    line-height: 1.1 !important;
+    border: 1px solid rgba(255,255,255,0.18) !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    min-height: unset !important;
+}
+section[data-testid="stSidebar"] button[kind="secondary"]:hover {
+    background: rgba(255,255,255,0.09) !important;
+    border-color: rgba(255,255,255,0.35) !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -235,34 +267,34 @@ op_idx   = OP_SKILLS.index(active)   if active in OP_SKILLS   else None
 gest_idx = GEST_SKILLS.index(active) if active in GEST_SKILLS else None
 susp_idx = SUSP_SKILLS.index(active) if active in SUSP_SKILLS else None
 
-st.sidebar.title("Sailing Inversiones")
-
-# ── Grupo 1 ──
-st.sidebar.markdown(
-    '<p style="color:#4fc3f7;font-size:0.75rem;font-weight:700;'
-    'letter-spacing:0.08em;margin:0.6rem 0 0.2rem">⚙ OPERATIVAS / GARANTÍAS</p>',
+# ── Header: título + toggle day/dark (icono compacto) ────────────────────────
+_hcol_title, _hcol_toggle = st.sidebar.columns([5, 1])
+_hcol_title.markdown(
+    '<p style="color:#ffffff;font-size:1.05rem;font-weight:700;'
+    'letter-spacing:0.03em;padding:0.25rem 0;'
+    'border-bottom:1px solid #2a4a6e;margin:0 0 0.55rem 0;">'
+    'Sailing Inversiones</p>',
     unsafe_allow_html=True
 )
-r_op = st.sidebar.radio("", OP_SKILLS, index=op_idx,
-                        key="_nav_op", label_visibility="collapsed")
+if _hcol_toggle.button("☀️" if dark else "🌙", key="_toggle_dark",
+                       help="Modo Día / Modo Oscuro"):
+    st.session_state.dark_mode = not dark
+    st.rerun()
 
-# ── Grupo 2 ──
-st.sidebar.markdown(
-    '<p style="color:#4fc3f7;font-size:0.75rem;font-weight:700;'
-    'letter-spacing:0.08em;margin:0.8rem 0 0.2rem">📊 GESTIÓN DEL ÁREA</p>',
-    unsafe_allow_html=True
-)
-r_gest = st.sidebar.radio("", GEST_SKILLS, index=gest_idx,
-                          key="_nav_gest", label_visibility="collapsed")
+# ── Grupo 1: abierto por defecto ──
+with st.sidebar.expander("⚙ OPERATIVAS / GARANTÍAS", expanded=True, key="exp_op"):
+    r_op = st.radio("", OP_SKILLS, index=op_idx,
+                    key="_nav_op", label_visibility="collapsed")
 
-# ── Grupo 3 ──
-st.sidebar.markdown(
-    '<p style="color:#7a9bc0;font-size:0.75rem;font-weight:700;'
-    'letter-spacing:0.08em;margin:0.8rem 0 0.2rem">⏸ EN SUSPENSO</p>',
-    unsafe_allow_html=True
-)
-r_susp = st.sidebar.radio("", SUSP_SKILLS, index=susp_idx,
-                          key="_nav_susp", label_visibility="collapsed")
+# ── Grupo 2: abierto por defecto ──
+with st.sidebar.expander("📊 GESTIÓN DEL ÁREA", expanded=True, key="exp_gest"):
+    r_gest = st.radio("", GEST_SKILLS, index=gest_idx,
+                      key="_nav_gest", label_visibility="collapsed")
+
+# ── Grupo 3: contraído por defecto ──
+with st.sidebar.expander("⏸ EN SUSPENSO", expanded=False, key="exp_susp"):
+    r_susp = st.radio("", SUSP_SKILLS, index=susp_idx,
+                      key="_nav_susp", label_visibility="collapsed")
 
 # Detectar cambio y mantener exclusividad entre grupos
 new_skill = None
@@ -302,11 +334,6 @@ elif _n > 0:
 else:
     st.sidebar.info("Sin archivos compartidos")
 
-# ── Toggle Day / Dark ─────────────────────────────────────────────────────────
-toggle_label = "☀️ Modo Día" if dark else "🌙 Modo Oscuro"
-if st.sidebar.button(toggle_label, use_container_width=True):
-    st.session_state.dark_mode = not dark
-    st.rerun()
 
 
 # ── Routing ───────────────────────────────────────────────────────────────────
