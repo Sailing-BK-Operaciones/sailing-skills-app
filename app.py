@@ -203,24 +203,89 @@ if not check_password():
     st.stop()
 
 
-# ── Sidebar ───────────────────────────────────────────────────────────────────
+# ── Navegación agrupada ───────────────────────────────────────────────────────
+OP_SKILLS = [
+    "Archivos Compartidos",
+    "Actual Position",
+    "Control Márgenes Gara BYMA",
+    "Risk Position",
+    "Risk Monitoring Client",
+    "Distribución Gara BYMA",
+    "Genera TXT Gara NASDAQ",
+    "Collateral Position",
+    "Arreglos Garantías",
+    "Control Aforos BYMA",
+]
+GEST_SKILLS = [
+    "Tesorería",
+    "Reporte Operativo",
+]
+SUSP_SKILLS = [
+    "Settlement Position",
+    "Settlement Instruction",
+    "Settlement Obligation",
+]
+
+# Inicializar skill activa
+if "active_skill" not in st.session_state:
+    st.session_state.active_skill = "Archivos Compartidos"
+
+active = st.session_state.active_skill
+op_idx   = OP_SKILLS.index(active)   if active in OP_SKILLS   else None
+gest_idx = GEST_SKILLS.index(active) if active in GEST_SKILLS else None
+susp_idx = SUSP_SKILLS.index(active) if active in SUSP_SKILLS else None
+
 st.sidebar.title("Sailing Inversiones")
 
-skill = st.sidebar.radio(
-    "Seleccioná la skill:",
-    [
-        "Archivos Compartidos",
-        "Risk Monitoring Client",
-        "Risk Position",
-        "Distribución Gara BYMA",
-        "Genera TXT Gara NASDAQ",
-        "Actual Position",
-        "Settlement Position",
-        "Collateral Position",
-    ]
+# ── Grupo 1 ──
+st.sidebar.markdown(
+    '<p style="color:#4fc3f7;font-size:0.75rem;font-weight:700;'
+    'letter-spacing:0.08em;margin:0.6rem 0 0.2rem">⚙ OPERATIVAS / GARANTÍAS</p>',
+    unsafe_allow_html=True
 )
+r_op = st.sidebar.radio("", OP_SKILLS, index=op_idx,
+                        key="_nav_op", label_visibility="collapsed")
 
-# Indicador de archivos compartidos
+# ── Grupo 2 ──
+st.sidebar.markdown(
+    '<p style="color:#4fc3f7;font-size:0.75rem;font-weight:700;'
+    'letter-spacing:0.08em;margin:0.8rem 0 0.2rem">📊 GESTIÓN DEL ÁREA</p>',
+    unsafe_allow_html=True
+)
+r_gest = st.sidebar.radio("", GEST_SKILLS, index=gest_idx,
+                          key="_nav_gest", label_visibility="collapsed")
+
+# ── Grupo 3 ──
+st.sidebar.markdown(
+    '<p style="color:#7a9bc0;font-size:0.75rem;font-weight:700;'
+    'letter-spacing:0.08em;margin:0.8rem 0 0.2rem">⏸ EN SUSPENSO</p>',
+    unsafe_allow_html=True
+)
+r_susp = st.sidebar.radio("", SUSP_SKILLS, index=susp_idx,
+                          key="_nav_susp", label_visibility="collapsed")
+
+# Detectar cambio y mantener exclusividad entre grupos
+new_skill = None
+if r_op is not None and r_op != active:
+    new_skill = r_op
+    for k in ["_nav_gest", "_nav_susp"]:
+        st.session_state.pop(k, None)
+elif r_gest is not None and r_gest != active:
+    new_skill = r_gest
+    for k in ["_nav_op", "_nav_susp"]:
+        st.session_state.pop(k, None)
+elif r_susp is not None and r_susp != active:
+    new_skill = r_susp
+    for k in ["_nav_op", "_nav_gest"]:
+        st.session_state.pop(k, None)
+
+if new_skill:
+    st.session_state.active_skill = new_skill
+    st.rerun()
+
+skill = st.session_state.active_skill
+
+# ── Indicador de archivos compartidos ────────────────────────────────────────
 from shared_store import is_loaded as _is_loaded
 _SHARED_KEYS = [
     "shared_pc", "shared_sagaclte", "shared_sateclte", "shared_contbole",
@@ -229,6 +294,7 @@ _SHARED_KEYS = [
 ]
 _n = sum(1 for k in _SHARED_KEYS if _is_loaded(k))
 _total = len(_SHARED_KEYS)
+st.sidebar.divider()
 if _n == _total:
     st.sidebar.success(f"✓ {_n}/{_total} archivos compartidos")
 elif _n > 0:
@@ -236,8 +302,7 @@ elif _n > 0:
 else:
     st.sidebar.info("Sin archivos compartidos")
 
-# Toggle Day / Dark
-st.sidebar.divider()
+# ── Toggle Day / Dark ─────────────────────────────────────────────────────────
 toggle_label = "☀️ Modo Día" if dark else "🌙 Modo Oscuro"
 if st.sidebar.button(toggle_label, use_container_width=True):
     st.session_state.dark_mode = not dark
@@ -248,11 +313,14 @@ if st.sidebar.button(toggle_label, use_container_width=True):
 if skill == "Archivos Compartidos":
     from shared_inputs import render
     render()
-elif skill == "Risk Monitoring Client":
-    from skills.risk_monitoring_client.ui import render
+elif skill == "Actual Position":
+    from skills.actual_position.ui import render
     render()
 elif skill == "Risk Position":
     from skills.risk_position.ui import render
+    render()
+elif skill == "Risk Monitoring Client":
+    from skills.risk_monitoring_client.ui import render
     render()
 elif skill == "Distribución Gara BYMA":
     from skills.distribucion_gara.ui import render
@@ -260,11 +328,8 @@ elif skill == "Distribución Gara BYMA":
 elif skill == "Genera TXT Gara NASDAQ":
     from skills.genera_txt_gara_nasdaq.ui import render
     render()
-elif skill == "Actual Position":
-    from skills.actual_position.ui import render
-    render()
 elif skill == "Collateral Position":
     from skills.Collateral_position.ui import render
     render()
 else:
-    st.info("Skill en construcción.")
+    st.info(f"**{skill}** — skill en construcción.", icon="🚧")
