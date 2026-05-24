@@ -85,29 +85,79 @@ button[kind="secondary"]:hover { background-color: #e3f0fc !important; }
 else:
     st.markdown("""
 <style>
-.stApp, .main { background-color: #0f1724 !important; }
-.main .block-container { background-color: #0f1724 !important; }
-p, li, span, div { color: #dce8f5; }
+/* ── Fondos ── */
+.stApp, .main, .main .block-container { background-color: #0f1724 !important; }
+
+/* ── Títulos ── */
 h1 { color: #e8f4ff !important; font-weight: 700 !important; font-size: 1.6rem !important;
      border-bottom: 2px solid #4fc3f7; padding-bottom: 0.4rem; margin-bottom: 0.6rem !important; }
 h2 { color: #b8d4f0 !important; font-weight: 600 !important; font-size: 1.15rem !important; }
 h3 { color: #4fc3f7 !important; font-weight: 600 !important; font-size: 1rem !important; }
 hr { border-color: #2a3f5f !important; margin: 1rem 0 !important; }
+
+/* ── Texto general en área principal ── */
+.main p, .main li, .main span,
+[data-testid="stMarkdownContainer"] p,
+[data-testid="stMarkdownContainer"] li,
+[data-testid="stMarkdownContainer"] span,
+[data-testid="stMarkdownContainer"] strong,
+[data-testid="stMarkdownContainer"] em { color: #e0eaf4 !important; }
+
+/* ── Labels de widgets (file uploader, inputs, etc.) ── */
+[data-testid="stWidgetLabel"] p,
+[data-testid="stWidgetLabel"] label,
+[data-testid="stWidgetLabel"] span,
+label { color: #e0eaf4 !important; }
+
+/* ── Texto dentro del file uploader ── */
+[data-testid="stFileUploader"] p,
+[data-testid="stFileUploader"] span,
+[data-testid="stFileUploader"] small,
+[data-testid="stFileUploaderDropzone"] span { color: #b0cce8 !important; }
+
+/* ── Captions — más visibles ── */
+[data-testid="stCaptionContainer"] p,
+[data-testid="stCaptionContainer"] span { color: #b0cce8 !important; font-size: 0.8rem !important; }
+
+/* ── Métricas ── */
 [data-testid="stMetric"] { background: #1a2535 !important; border-radius: 8px;
     padding: 0.8rem 1rem !important; border-left: 3px solid #4fc3f7; }
-[data-testid="stMetricLabel"] { color: #7a9bc0 !important; font-size: 0.78rem !important;
+[data-testid="stMetricLabel"] p,
+[data-testid="stMetricLabel"] { color: #8ab8d8 !important; font-size: 0.78rem !important;
     font-weight: 600 !important; text-transform: uppercase; letter-spacing: 0.04em; }
 [data-testid="stMetricValue"] { color: #e8f4ff !important; font-size: 1.35rem !important; font-weight: 700 !important; }
-button[kind="secondary"] { border-radius: 6px !important; border-color: #4fc3f7 !important; color: #4fc3f7 !important; }
-button[kind="secondary"]:hover { background-color: rgba(79,195,247,0.1) !important; }
+
+/* ── Alerts (info/warning/success/error) ── */
+[data-testid="stAlert"] p,
+[data-testid="stAlert"] span,
+[data-testid="stAlert"] li { color: #e0eaf4 !important; }
+
+/* ── Expanders ── */
 [data-testid="stExpander"] { border: 1px solid #2a3f5f !important; border-radius: 8px !important; background: #1a2535 !important; }
-[data-testid="stExpander"] summary { font-weight: 600; color: #b8d4f0 !important; }
+[data-testid="stExpander"] summary,
+[data-testid="stExpander"] summary span,
+[data-testid="stExpander"] summary p { font-weight: 600; color: #b8d4f0 !important; }
+[data-testid="stExpander"] p,
+[data-testid="stExpander"] li,
+[data-testid="stExpander"] span { color: #e0eaf4 !important; }
+
+/* ── File uploader ── */
 [data-testid="stFileUploader"] { border-radius: 8px !important; }
 [data-testid="stFileUploader"] section { border-color: #2a4a6e !important; border-radius: 8px !important; background: #1a2535 !important; }
 [data-testid="stFileUploader"] section:hover { border-color: #4fc3f7 !important; background: #1e2f45 !important; }
-[data-testid="stCaptionContainer"] p { color: #7a9bc0 !important; font-size: 0.8rem !important; }
-input, textarea { background-color: #1a2535 !important; color: #dce8f5 !important; border-color: #2a4a6e !important; }
-[data-testid="stMarkdownContainer"] p { color: #dce8f5 !important; }
+
+/* ── Inputs ── */
+input, textarea { background-color: #1a2535 !important; color: #e0eaf4 !important; border-color: #2a4a6e !important; }
+[data-testid="stNumberInput"] input,
+[data-testid="stTextInput"] input,
+[data-testid="stDateInput"] input { color: #e0eaf4 !important; }
+
+/* ── Botones secundarios/descarga ── */
+button[kind="secondary"] { border-radius: 6px !important; border-color: #4fc3f7 !important; color: #4fc3f7 !important; }
+button[kind="secondary"]:hover { background-color: rgba(79,195,247,0.1) !important; }
+
+/* ── Código ── */
+code, pre { background-color: #1a2535 !important; color: #b0cce8 !important; }
 </style>
 """, unsafe_allow_html=True)
 
