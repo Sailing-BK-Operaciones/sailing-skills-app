@@ -114,8 +114,7 @@ def render():
     if tc_mep == 0:       faltantes.append("TC MEP")
 
     if faltantes:
-        st.info(f"Faltan: {', '.join(faltantes)}")
-        return
+        st.caption(f"Falta para habilitar: {', '.join(faltantes)}")
 
     # ─────────────────────────────────────────────────────────────────────────
     # Ejecución
@@ -124,6 +123,7 @@ def render():
         f"Actualizar reporte — {mes_sel} {int(anio_sel)}",
         type="primary",
         use_container_width=True,
+        disabled=bool(faltantes),
     ):
         with st.spinner(f"Procesando {mes_sel} {int(anio_sel)}..."):
             try:

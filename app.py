@@ -46,12 +46,42 @@ section[data-testid="stSidebar"] [data-testid="stAlert"] {
 /* ── Layout ── */
 .main .block-container { padding-top: 1.2rem; padding-bottom: 2rem; max-width: 1200px; }
 
-/* ── Botones primarios ── */
-button[kind="primary"] {
-    background-color: #1565c0 !important; border-color: #1565c0 !important;
-    font-weight: 600 !important; letter-spacing: 0.02em; border-radius: 6px !important;
+/* ── Botones primarios — legibles en modo day y night ── */
+button[kind="primary"],
+button[kind="primaryFormSubmit"] {
+    background-color: #1565c0 !important;
+    border-color:     #1565c0 !important;
+    color:            #ffffff !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.02em;
+    border-radius: 6px !important;
 }
-button[kind="primary"]:hover { background-color: #0d47a1 !important; border-color: #0d47a1 !important; }
+button[kind="primary"] p,
+button[kind="primary"] span,
+button[kind="primaryFormSubmit"] p,
+button[kind="primaryFormSubmit"] span {
+    color: #ffffff !important;
+}
+button[kind="primary"]:hover,
+button[kind="primaryFormSubmit"]:hover {
+    background-color: #0d47a1 !important;
+    border-color:     #0d47a1 !important;
+    color:            #ffffff !important;
+}
+button[kind="primary"]:disabled,
+button[kind="primaryFormSubmit"]:disabled {
+    background-color: #1565c0 !important;
+    border-color:     #1565c0 !important;
+    color:            #ffffff !important;
+    opacity: 0.42 !important;
+    cursor: not-allowed !important;
+}
+button[kind="primary"]:disabled p,
+button[kind="primary"]:disabled span,
+button[kind="primaryFormSubmit"]:disabled p,
+button[kind="primaryFormSubmit"]:disabled span {
+    color: #ffffff !important;
+}
 
 /* ── Alerts ── */
 [data-testid="stAlert"] { border-radius: 6px !important; }
