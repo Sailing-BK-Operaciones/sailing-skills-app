@@ -205,13 +205,19 @@ code, pre { background-color: #1a2535 !important; color: #b0cce8 !important; }
 
 
 # ── Autenticación ─────────────────────────────────────────────────────────────
+from auth import check_credentials, render_admin_panel
+
 MAX_INTENTOS = 5
 
-def check_password():
-    if "authenticated" not in st.session_state:
-        st.session_state.authenticated = False
+def check_login():
+    if "authenticated"  not in st.session_state:
+        st.session_state.authenticated  = False
     if "failed_attempts" not in st.session_state:
         st.session_state.failed_attempts = 0
+    if "username" not in st.session_state:
+        st.session_state.username = ""
+    if "role" not in st.session_state:
+        st.session_state.role = ""
 
     if not st.session_state.authenticated:
         st.title("Sailing Inversiones")
@@ -224,26 +230,33 @@ def check_password():
             )
             return False
 
-        restantes = MAX_INTENTOS - st.session_state.failed_attempts
         with st.form("login_form"):
-            password = st.text_input("Contraseña:", type="password")
+            username  = st.text_input("Usuario:")
+            password  = st.text_input("Contraseña:", type="password")
             submitted = st.form_submit_button("Ingresar", use_container_width=True)
+
         if submitted:
-            if password == st.secrets["PASSWORD"]:
-                st.session_state.authenticated = True
+            role = check_credentials(username, password)
+            if role:
+                st.session_state.authenticated  = True
+                st.session_state.username       = username.strip().lower()
+                st.session_state.role           = role
                 st.session_state.failed_attempts = 0
                 st.rerun()
             else:
                 st.session_state.failed_attempts += 1
-                restantes -= 1
+                restantes = MAX_INTENTOS - st.session_state.failed_attempts
                 if restantes > 0:
-                    st.error(f"Contraseña incorrecta. Intentos restantes: {restantes}")
+                    st.error(
+                        f"Usuario o contraseña incorrectos. "
+                        f"Intentos restantes: {restantes}"
+                    )
                 else:
                     st.rerun()
         return False
     return True
 
-if not check_password():
+if not check_login():
     st.stop()
 
 
@@ -293,6 +306,24 @@ if _hcol_toggle.button("☀️" if dark else "🌙", key="_toggle_dark",
                        help="Modo Día / Modo Oscuro"):
     st.session_state.dark_mode = not dark
     st.rerun()
+
+# ── Usuario conectado + logout ────────────────────────────────────────────────
+_uname = st.session_state.get("username", "")
+_role  = st.session_state.get("role", "")
+_col_usr, _col_logout = st.sidebar.columns([4, 1])
+_col_usr.markdown(
+    f'<p style="color:#8ab8d8;font-size:0.78rem;margin:0;padding:0.1rem 0;">'
+    f'{"👑 " if _role == "admin" else "👤 "}{_uname}</p>',
+    unsafe_allow_html=True,
+)
+if _col_logout.button("↩", key="_logout", help="Cerrar sesión"):
+    for k in ["authenticated", "username", "role", "failed_attempts"]:
+        st.session_state.pop(k, None)
+    st.rerun()
+
+# ── Panel admin (solo visible para el administrador) ─────────────────────────
+if _role == "admin":
+    render_admin_panel()
 
 # ── Indicador de archivos compartidos (siempre visible, antes de los grupos) ─
 from shared_store import is_loaded as _is_loaded
