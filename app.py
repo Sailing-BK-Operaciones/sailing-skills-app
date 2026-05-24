@@ -318,14 +318,39 @@ SUSP_SKILLS = [
     "Settlement Obligation",
 ]
 
-# Inicializar skill activa
+# ── Estado de navegación: inicializar keys solo si no existen ─────────────────
 if "active_skill" not in st.session_state:
     st.session_state.active_skill = "Archivos Compartidos"
 
-active = st.session_state.active_skill
-op_idx   = OP_SKILLS.index(active)   if active in OP_SKILLS   else None
-gest_idx = GEST_SKILLS.index(active) if active in GEST_SKILLS else None
-susp_idx = SUSP_SKILLS.index(active) if active in SUSP_SKILLS else None
+_active = st.session_state.active_skill
+if "_nav_op"   not in st.session_state:
+    st.session_state._nav_op   = _active if _active in OP_SKILLS   else None
+if "_nav_gest" not in st.session_state:
+    st.session_state._nav_gest = _active if _active in GEST_SKILLS else None
+if "_nav_susp" not in st.session_state:
+    st.session_state._nav_susp = _active if _active in SUSP_SKILLS else None
+
+# ── Callbacks: actualizan active_skill y limpian los otros grupos ─────────────
+def _on_op_change():
+    chosen = st.session_state._nav_op
+    if chosen:
+        st.session_state.active_skill = chosen
+        st.session_state._nav_gest = None
+        st.session_state._nav_susp = None
+
+def _on_gest_change():
+    chosen = st.session_state._nav_gest
+    if chosen:
+        st.session_state.active_skill = chosen
+        st.session_state._nav_op   = None
+        st.session_state._nav_susp = None
+
+def _on_susp_change():
+    chosen = st.session_state._nav_susp
+    if chosen:
+        st.session_state.active_skill = chosen
+        st.session_state._nav_op   = None
+        st.session_state._nav_gest = None
 
 # ── Header: título + toggle day/dark (icono compacto) ────────────────────────
 _hcol_title, _hcol_toggle = st.sidebar.columns([5, 1])
@@ -372,39 +397,23 @@ else:
     st.sidebar.info("Sin archivos compartidos")
 st.sidebar.divider()
 
-# ── Grupo 1: abierto por defecto ──
+# ── Grupo 1 ──
 with st.sidebar.expander("⚙ OPERATIVAS / GARANTÍAS", expanded=True, key="exp_op"):
-    r_op = st.radio("", OP_SKILLS, index=op_idx,
-                    key="_nav_op", label_visibility="collapsed")
+    st.radio("", OP_SKILLS, index=None,
+             key="_nav_op", on_change=_on_op_change,
+             label_visibility="collapsed")
 
-# ── Grupo 2: abierto por defecto ──
+# ── Grupo 2 ──
 with st.sidebar.expander("📊 GESTIÓN DEL ÁREA", expanded=False, key="exp_gest"):
-    r_gest = st.radio("", GEST_SKILLS, index=gest_idx,
-                      key="_nav_gest", label_visibility="collapsed")
+    st.radio("", GEST_SKILLS, index=None,
+             key="_nav_gest", on_change=_on_gest_change,
+             label_visibility="collapsed")
 
-# ── Grupo 3: contraído por defecto ──
+# ── Grupo 3 ──
 with st.sidebar.expander("⏸ EN SUSPENSO", expanded=False, key="exp_susp"):
-    r_susp = st.radio("", SUSP_SKILLS, index=susp_idx,
-                      key="_nav_susp", label_visibility="collapsed")
-
-# Detectar cambio y mantener exclusividad entre grupos
-new_skill = None
-if r_op is not None and r_op != active:
-    new_skill = r_op
-    for k in ["_nav_gest", "_nav_susp"]:
-        st.session_state.pop(k, None)
-elif r_gest is not None and r_gest != active:
-    new_skill = r_gest
-    for k in ["_nav_op", "_nav_susp"]:
-        st.session_state.pop(k, None)
-elif r_susp is not None and r_susp != active:
-    new_skill = r_susp
-    for k in ["_nav_op", "_nav_gest"]:
-        st.session_state.pop(k, None)
-
-if new_skill:
-    st.session_state.active_skill = new_skill
-    st.rerun()
+    st.radio("", SUSP_SKILLS, index=None,
+             key="_nav_susp", on_change=_on_susp_change,
+             label_visibility="collapsed")
 
 skill = st.session_state.active_skill
 
