@@ -75,12 +75,19 @@ def render():
     # ─────────────────────────────────────────────────────────────────────────
     st.subheader("Cargar mes")
 
-    col_mes, col_tc1, col_tc2 = st.columns([2, 1.5, 1.5])
+    col_mes, col_anio, col_tc1, col_tc2 = st.columns([2, 1, 1.5, 1.5])
     with col_mes:
         mes_sel = st.selectbox(
             "Mes",
             options=[m for m in MESES_ORDER if m not in meses_cargados],
             key="tes_mes_sel",
+        )
+    with col_anio:
+        anio_sel = st.number_input(
+            "Año",
+            value=2026,
+            min_value=2020, max_value=2099, step=1,
+            key="tes_anio",
         )
     with col_tc1:
         tc_hist_mep = TC_HISTORICOS.get(mes_sel, {}).get('MEP', 0.0) if mes_sel else 0.0
@@ -127,11 +134,14 @@ def render():
         if not mep_file:      falt.append("MOVICTA U$D MEP")
         if tc_mep == 0:       falt.append("TC MEP")
         if falt:
-            st.caption(f"Falta para habilitar Procesar mes: {', '.join(falt)}")
+            st.caption(f"Falta para habilitar: {', '.join(falt)}")
 
-    if st.button("Procesar mes", disabled=not btn_ok, type="primary", key="tes_procesar",
-                 use_container_width=True):
-        with st.spinner(f"Procesando {mes_sel}..."):
+    if st.button(
+        f"Actualizar reporte — {mes_sel} {int(anio_sel)}" if mes_sel else "Actualizar reporte",
+        disabled=not btn_ok, type="primary", key="tes_procesar",
+        use_container_width=True,
+    ):
+        with st.spinner(f"Procesando {mes_sel} {int(anio_sel)}..."):
             try:
                 df, advs = procesar_mes(
                     ars_file   = ars_file,
@@ -160,12 +170,11 @@ def render():
     # ─────────────────────────────────────────────────────────────────────────
     # SECCIÓN 2: Meses cargados
     # ─────────────────────────────────────────────────────────────────────────
+    if not meses_cargados:
+        return
+
     st.divider()
     st.subheader("Meses cargados en la sesión")
-
-    if not meses_cargados:
-        st.info("Aún no hay meses cargados. Procesá al menos uno para generar el reporte.")
-        return
 
     # Mostrar tabla de resumen
     resumen_rows = []
