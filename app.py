@@ -368,7 +368,7 @@ elif skill == "Genera TXT Gara NASDAQ":
 elif skill == "Collateral Position":
     from skills.Collateral_position.ui import render
     render()
-elif skill == "Control Márgenes Gara BYMA":
+elif skill == "Control Aforos BYMA":
     from skills.control_aforos_byma.ui import render
     render()
 else:

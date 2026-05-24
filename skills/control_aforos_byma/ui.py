@@ -1,14 +1,69 @@
 import streamlit as st
 import traceback
+from datetime import datetime, timezone, timedelta
+from shared_store import get_meta
 from skills.shared_ui import shared_or_upload
+
+AR_TZ = timezone(timedelta(hours=-3))
+
+
+def _indicador_circular():
+    """
+    Muestra de forma prominente la fecha de la última circular BYMA cargada
+    y un alerta de antigüedad. La circular se actualiza ~cada 2 semanas.
+    """
+    nombre_pdf, fecha_str = get_meta("shared_pdf_aforos")
+
+    if not fecha_str:
+        st.error(
+            "**PDF de aforos BYMA no cargado.**  "
+            "Ir a Archivos Compartidos y subir la circular antes de ejecutar."
+        )
+        return
+
+    try:
+        fecha_carga = datetime.strptime(fecha_str, "%d/%m/%Y %H:%M").replace(tzinfo=AR_TZ)
+        hoy  = datetime.now(AR_TZ)
+        dias = (hoy - fecha_carga).days
+
+        if dias == 0:
+            delta_str = "cargada hoy"
+        elif dias == 1:
+            delta_str = "cargada ayer"
+        else:
+            delta_str = f"hace **{dias} días**"
+
+        archivo_str = f" · `{nombre_pdf}`" if nombre_pdf else ""
+
+        if dias <= 14:
+            st.success(
+                f"📄 Circular BYMA vigente — última carga: **{fecha_str}** ({delta_str}){archivo_str}"
+            )
+        elif dias <= 28:
+            st.warning(
+                f"📄 Circular BYMA — última carga: **{fecha_str}** ({delta_str}){archivo_str}  \n"
+                f"Verificar si BYMA publicó una versión más reciente (se actualiza cada ~2 semanas)."
+            )
+        else:
+            st.error(
+                f"📄 Circular BYMA posiblemente desactualizada — última carga: **{fecha_str}** ({delta_str}){archivo_str}  \n"
+                f"Descargar la última versión del sitio de BYMA y recargar en Archivos Compartidos."
+            )
+    except Exception:
+        # Fallback si el formato de fecha cambia
+        st.info(f"📄 PDF de aforos BYMA cargado: {fecha_str}")
 
 
 def render():
-    st.title("Control Márgenes Gara BYMA")
+    st.title("Control Aforos BYMA")
     st.markdown(
         "Compara la circular de aforos BYMA (PDF) con el maestro de especies de Gallo (ESPECIES.XLS). "
         "Detecta diferencias de lista/aforo y especies aceptadas por BYMA que no están dadas de alta en Gallo."
     )
+
+    # ── Indicador de actualización — siempre visible al ingresar ─────────────
+    _indicador_circular()
+
     st.divider()
 
     with st.expander("¿Cómo usar esta skill?"):
@@ -24,14 +79,14 @@ def render():
 
         **Output — FALTANTE en GALLO.txt** *(si aplica)*: listado de especies para dar de alta en Gallo.
 
-        **Tablas de referencia Lista → Aforo:**
+        **Tablas Lista → Aforo:**
 
         | Segmento | Listas | Aforos |
         |---|---|---|
-        | Renta Variable | 1–8 | 85%–30% |
-        | Renta Fija Públicos | 11–17 | 90%–60% |
-        | Renta Fija Privados | 22–27 | 85%–60% |
-        | Letras y Bonos del Tesoro | 85 / 90 / 95 | 85% / 90% / 95% |
+        | Renta Variable | 1–8 | 85 %–30 % |
+        | Renta Fija Públicos | 11–17 | 90 %–60 % |
+        | Renta Fija Privados | 22–27 | 85 %–60 % |
+        | Letras y Bonos del Tesoro | 85 / 90 / 95 | 85 % / 90 % / 95 % |
         """)
 
     # ── Inputs (ambos desde Archivos Compartidos) ─────────────────────────────
@@ -80,9 +135,9 @@ def render():
 
                 # Métricas
                 col_a, col_b, col_c = st.columns(3)
-                col_a.metric("Especies en PDF",       resumen["total_pdf"])
-                col_b.metric("Diferencias de aforo",  n_dif)
-                col_c.metric("Faltantes en Gallo",    n_falt)
+                col_a.metric("Especies en PDF",      resumen["total_pdf"])
+                col_b.metric("Diferencias de aforo", n_dif)
+                col_c.metric("Faltantes en Gallo",   n_falt)
 
                 # Descargas
                 st.download_button(
@@ -92,7 +147,6 @@ def render():
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     use_container_width=True,
                 )
-
                 if txt_faltantes:
                     st.download_button(
                         label="⬇ Descargar FALTANTE en GALLO.txt",
@@ -102,7 +156,7 @@ def render():
                         use_container_width=True,
                     )
 
-                # Advertencias de procesamiento
+                # Advertencias
                 if advertencias:
                     with st.expander(f"⚠ {len(advertencias)} advertencia(s) de procesamiento"):
                         for adv in advertencias:
