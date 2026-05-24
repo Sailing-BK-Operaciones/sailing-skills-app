@@ -257,9 +257,10 @@ OP_SKILLS = [
     "Collateral Position",
     "Arreglos Garantías",
     "Control Aforos BYMA",
+    "Conversión Dólares Renta",
+    "Tesorería",
 ]
 GEST_SKILLS = [
-    "Tesorería",
     "Reporte Operativo",
 ]
 SUSP_SKILLS = [
@@ -370,6 +371,21 @@ elif skill == "Collateral Position":
     render()
 elif skill == "Control Aforos BYMA":
     from skills.control_aforos_byma.ui import render
+    render()
+elif skill == "Control Márgenes Gara BYMA":
+    from skills.control_margenes_gara_byma.ui import render
+    render()
+elif skill == "Arreglos Garantías":
+    from skills.arreglos_garantias.ui import render
+    render()
+elif skill == "Conversión Dólares Renta":
+    from skills.conversion_dolares_renta.ui import render
+    render()
+elif skill == "Tesorería":
+    from skills.tesoreria.ui import render
+    render()
+elif skill == "Reporte Operativo":
+    from skills.reporte_operativo.ui import render
     render()
 else:
     st.info(f"**{skill}** — skill en construcción.", icon="🚧")
