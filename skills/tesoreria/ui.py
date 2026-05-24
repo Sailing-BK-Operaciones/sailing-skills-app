@@ -51,6 +51,26 @@ def render():
     meses_cargados = st.session_state[_KEY]
 
     # ─────────────────────────────────────────────────────────────────────────
+    # SECCIÓN 0: Reporte base — siempre visible
+    # ─────────────────────────────────────────────────────────────────────────
+    st.subheader("Reporte base")
+    base_file = st.file_uploader(
+        "Reporte acumulativo existente (XLSX) — opcional",
+        type=["xlsx"],
+        key="tes_base",
+        help=(
+            "Si subís el reporte del mes anterior, los nuevos meses se agregan al existente. "
+            "Sin archivo base, se genera un reporte nuevo desde cero con los meses cargados en sesión."
+        ),
+    )
+    if base_file:
+        st.caption(f"📎 Modo actualización — los meses procesados se agregarán a «{base_file.name}»")
+    else:
+        st.caption("📄 Modo nuevo reporte — se generará desde cero con los meses cargados en sesión")
+
+    st.divider()
+
+    # ─────────────────────────────────────────────────────────────────────────
     # SECCIÓN 1: Cargar mes
     # ─────────────────────────────────────────────────────────────────────────
     st.subheader("Cargar mes")
@@ -109,7 +129,8 @@ def render():
         if falt:
             st.caption(f"Falta para habilitar Procesar mes: {', '.join(falt)}")
 
-    if st.button("Procesar mes", disabled=not btn_ok, type="primary", key="tes_procesar"):
+    if st.button("Procesar mes", disabled=not btn_ok, type="primary", key="tes_procesar",
+                 use_container_width=True):
         with st.spinner(f"Procesando {mes_sel}..."):
             try:
                 df, advs = procesar_mes(
@@ -195,20 +216,9 @@ def render():
 
     st.subheader(f"Generar reporte — {n_meses} mes(es): {meses_label}")
 
-    base_file = st.file_uploader(
-        "Reporte base (XLSX) — opcional",
-        type=["xlsx"],
-        key="tes_base",
-        help=(
-            "Si subís el reporte del mes anterior, los nuevos meses se agregan al existente. "
-            "Sin archivo base, se genera un reporte nuevo desde cero con los meses cargados en sesión."
-        ),
-    )
-
     if base_file:
         st.info(
-            f"Modo **actualización**: se agregarán {n_meses} mes(es) al reporte base "
-            f"«{base_file.name}».",
+            f"Modo **actualización**: se agregarán {n_meses} mes(es) al reporte base «{base_file.name}».",
             icon="📎",
         )
     else:

@@ -44,21 +44,16 @@ def render():
     # ─────────────────────────────────────────────────────────────────────────
     st.subheader("Archivos")
 
-    col_rep, col_cont = st.columns(2)
-    with col_rep:
-        reporte_file = st.file_uploader(
-            "Reporte acumulativo (XLSX) *",
-            type=["xlsx"],
-            key="ro_reporte",
-            help="El XLSX existente del año. El mes nuevo se agrega sobre este archivo.",
-        )
-    with col_cont:
-        contbole_file = st.file_uploader(
-            "CONTBOLE del mes (XLS) *",
-            type=["xls", "xlsx"],
-            key="ro_contbole",
-            help="Exportación de boletos desde Gallo — hoja Control_de_Boletos",
-        )
+    reporte_file = st.file_uploader(
+        "Reporte acumulativo (XLSX) *",
+        type=["xlsx"],
+        key="ro_reporte",
+        help="El XLSX existente del año. El mes nuevo se agrega sobre este archivo.",
+    )
+
+    contbole_file = shared_or_upload(
+        "shared_contbole", "CONTBOLE.XLS", ["xls", "xlsx"], "ro_contbole"
+    )
 
     tabcompb_file = shared_or_upload(
         "shared_tabcompb", "TABCOMPB.XLS", ["xls", "xlsx"], "ro_tabcompb"
