@@ -83,6 +83,19 @@ section[data-testid="stSidebar"] details[open] > summary {
 }
 section[data-testid="stSidebar"] details[open] > summary svg { fill: #cce8f8 !important; }
 
+/* ── Inputs dentro del sidebar: siempre con fondo oscuro y texto claro ── */
+section[data-testid="stSidebar"] input,
+section[data-testid="stSidebar"] textarea {
+    background-color: #1e3a5f !important;
+    color: #e8f4ff !important;
+    border: 1px solid #3a6a9f !important;
+    border-radius: 4px !important;
+}
+section[data-testid="stSidebar"] input::placeholder,
+section[data-testid="stSidebar"] textarea::placeholder {
+    color: #7a9bc0 !important;
+}
+
 /* ── Botón toggle tema: compacto en header del sidebar ── */
 section[data-testid="stSidebar"] button[kind="secondary"] {
     padding: 0.12rem 0.32rem !important;
@@ -321,10 +334,6 @@ if _col_logout.button("↩", key="_logout", help="Cerrar sesión"):
         st.session_state.pop(k, None)
     st.rerun()
 
-# ── Panel admin (solo visible para el administrador) ─────────────────────────
-if _role == "admin":
-    render_admin_panel()
-
 # ── Indicador de archivos compartidos (siempre visible, antes de los grupos) ─
 from shared_store import is_loaded as _is_loaded
 _SHARED_KEYS = [
@@ -377,6 +386,10 @@ if new_skill:
     st.rerun()
 
 skill = st.session_state.active_skill
+
+# ── Panel admin al pie del sidebar (solo visible para el administrador) ───────
+if _role == "admin":
+    render_admin_panel()
 
 
 
