@@ -1,0 +1,24 @@
+name: Keepalive — Streamlit Cloud
+
+# Pinea la app dos veces por día para evitar que Streamlit Cloud
+# la duerma por inactividad (umbral: 7 días sin tráfico).
+# Corre a las 06:00 y 18:00 UTC = 03:00 y 15:00 ART (UTC-3).
+
+on:
+  schedule:
+    - cron: '0 6,18 * * *'   # dos veces al día
+  workflow_dispatch:           # disparo manual desde la pestaña Actions
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping app
+        run: |
+          echo "Pinging https://sailing-bk-operaciones.streamlit.app/ ..."
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 45 \
+            "https://sailing-bk-operaciones.streamlit.app/")
+          echo "HTTP status: $STATUS"
+          # 200 = despierta y respondiendo
+          # 503 = durmiendo (Streamlit la está despertando en este momento)
+          # Ambos casos son normales; el ping ya resetea el contador de inactividad.
