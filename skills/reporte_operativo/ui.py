@@ -8,8 +8,8 @@ def render():
     st.title("Reporte Operativo — Boletos")
     st.markdown(
         "Procesa el archivo **CONTBOLE** (XLS de Gallo) del mes y actualiza el reporte "
-        "Excel acumulativo anual: Panel de Control, Canal Digital vs Manual, Mercado y "
-        "Segmento, Rankings TOP 20, Operaciones Diarias, y Detalle del mes."
+        "Excel acumulativo anual de Operaciones: Panel de Control, Canal Digital vs Manual, "
+        "Mercado y Segmento, Rankings TOP 20, Operaciones Diarias, y Detalle del mes."
     )
     st.divider()
 
