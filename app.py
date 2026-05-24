@@ -63,15 +63,25 @@ section[data-testid="stSidebar"] [data-testid="stExpander"] {
     background: rgba(255,255,255,0.04) !important;
     margin-bottom: 0.35rem !important;
 }
+/* Colapsado: tono apagado */
 section[data-testid="stSidebar"] [data-testid="stExpander"] summary {
-    color: #4fc3f7 !important;
+    color: #7a9bc0 !important;
     font-size: 0.74rem !important;
     font-weight: 700 !important;
     letter-spacing: 0.07em !important;
     padding: 0.35rem 0.55rem !important;
     text-transform: uppercase;
 }
-section[data-testid="stSidebar"] details > summary svg { fill: #4fc3f7 !important; }
+section[data-testid="stSidebar"] details > summary svg { fill: #7a9bc0 !important; }
+
+/* Expandido: fondo gris-azul sutil, texto más visible */
+section[data-testid="stSidebar"] details[open] > summary {
+    color: #cce8f8 !important;
+    background: rgba(255,255,255,0.09) !important;
+    border-bottom: 1px solid #1e3a5f !important;
+    border-radius: 5px 5px 0 0 !important;
+}
+section[data-testid="stSidebar"] details[open] > summary svg { fill: #cce8f8 !important; }
 
 /* ── Botón toggle tema: compacto en header del sidebar ── */
 section[data-testid="stSidebar"] button[kind="secondary"] {
@@ -287,7 +297,7 @@ with st.sidebar.expander("⚙ OPERATIVAS / GARANTÍAS", expanded=True, key="exp_
                     key="_nav_op", label_visibility="collapsed")
 
 # ── Grupo 2: abierto por defecto ──
-with st.sidebar.expander("📊 GESTIÓN DEL ÁREA", expanded=True, key="exp_gest"):
+with st.sidebar.expander("📊 GESTIÓN DEL ÁREA", expanded=False, key="exp_gest"):
     r_gest = st.radio("", GEST_SKILLS, index=gest_idx,
                       key="_nav_gest", label_visibility="collapsed")
 
