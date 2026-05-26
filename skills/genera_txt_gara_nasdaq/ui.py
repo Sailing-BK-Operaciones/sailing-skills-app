@@ -34,9 +34,11 @@ def render():
     )
     especies_file = shared_or_upload("shared_especies", "ESPECIES.XLS", ["xls", "xlsx"], "gtn_esp")
 
-    # Contadores de referencia persistidos en session_state
+    # ── Contadores ────────────────────────────────────────────────────────────
     if "gtn_counter" not in st.session_state:
         st.session_state["gtn_counter"] = {}
+    if "gtn_result" not in st.session_state:
+        st.session_state["gtn_result"] = None
 
     counter = st.session_state["gtn_counter"]
     col_ctr, col_btn = st.columns([3, 1])
@@ -48,6 +50,7 @@ def render():
     with col_btn:
         if st.button("Reiniciar contadores", key="gtn_reset"):
             st.session_state["gtn_counter"] = {}
+            st.session_state["gtn_result"] = None
             st.rerun()
 
     st.divider()
@@ -59,7 +62,8 @@ def render():
         st.info("Falta: ESPECIES.XLS")
         return
 
-    if st.button("Generar", type="primary", use_container_width=True):
+    # ── Botón generar ─────────────────────────────────────────────────────────
+    if st.button("Generar", type="primary", use_container_width=True, key="gtn_gen"):
         with st.spinner("Procesando..."):
             try:
                 from skills.genera_txt_gara_nasdaq.logic import generar_archivos
@@ -69,63 +73,75 @@ def render():
                     counter_state=st.session_state["gtn_counter"],
                 )
                 st.session_state["gtn_counter"] = new_counter
-
-                st.success(f"Archivos generados — fecha {r['fecha']}")
-
-                col_a, col_b, col_c = st.columns(3)
-                col_a.metric("Comitentes", r["n_comitentes"])
-                col_b.metric("Instrucciones DELIVER", r["n_enviar"])
-                col_c.metric("Instrucciones RECEIVE", r["n_disponible"])
-
-                if r["vto_sheets"]:
-                    st.info(f"Hojas VTO procesadas (cauciones → RECEIVE): {', '.join(r['vto_sheets'])}")
-                if r["unknown_actions"]:
-                    st.warning(f"Acciones no reconocidas — revisar: {', '.join(r['unknown_actions'])}")
-
-                col1, col2 = st.columns(2)
-                with col1:
-                    if outputs["req_envio"]:
-                        content, fname = outputs["req_envio"]
-                        _, _, n = outputs["req_envio_refs"]
-                        st.download_button(
-                            f"Descargar Req-envio ({n} instrucciones)",
-                            data=content, file_name=fname,
-                            mime="text/plain", use_container_width=True,
-                        )
-                    else:
-                        st.info("Sin instrucciones DELIVER.")
-
-                    if outputs["resumen_deposit"]:
-                        content, fname = outputs["resumen_deposit"]
-                        nc, nh = outputs["resumen_deposit_stats"]
-                        st.download_button(
-                            f"Descargar Resumen DEPOSIT (Client: {nc} / House: {nh})",
-                            data=content, file_name=fname,
-                            mime="text/plain", use_container_width=True,
-                        )
-
-                with col2:
-                    if outputs["ret_devolucion"]:
-                        content, fname = outputs["ret_devolucion"]
-                        _, _, n = outputs["ret_devolucion_refs"]
-                        st.download_button(
-                            f"Descargar Ret-devolucion ({n} instrucciones)",
-                            data=content, file_name=fname,
-                            mime="text/plain", use_container_width=True,
-                        )
-                    else:
-                        st.info("Sin instrucciones RECEIVE.")
-
-                    if outputs["resumen_withdraw"]:
-                        content, fname = outputs["resumen_withdraw"]
-                        nc, nh = outputs["resumen_withdraw_stats"]
-                        st.download_button(
-                            f"Descargar Resumen WITHDRAW (Client: {nc} / House: {nh})",
-                            data=content, file_name=fname,
-                            mime="text/plain", use_container_width=True,
-                        )
-
+                st.session_state["gtn_result"] = {"outputs": outputs, "r": r}
             except Exception as e:
                 st.error(f"Error al procesar: {e}")
                 with st.expander("Detalle del error"):
                     st.code(traceback.format_exc())
+
+    # ── Resultados — persisten en session_state entre reruns ──────────────────
+    result = st.session_state.get("gtn_result")
+    if not result:
+        return
+
+    outputs = result["outputs"]
+    r       = result["r"]
+
+    st.success(f"Archivos generados — fecha {r['fecha']}")
+
+    col_a, col_b, col_c = st.columns(3)
+    col_a.metric("Comitentes",            r["n_comitentes"])
+    col_b.metric("Instrucciones DELIVER", r["n_enviar"])
+    col_c.metric("Instrucciones RECEIVE", r["n_disponible"])
+
+    if r["vto_sheets"]:
+        st.info(f"Hojas VTO procesadas (cauciones → RECEIVE): {', '.join(r['vto_sheets'])}")
+    if r["unknown_actions"]:
+        st.warning(f"Acciones no reconocidas — revisar: {', '.join(r['unknown_actions'])}")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if outputs["req_envio"]:
+            content, fname = outputs["req_envio"]
+            _, _, n = outputs["req_envio_refs"]
+            st.download_button(
+                f"⬇ Descargar Req-envio ({n} instrucciones)",
+                data=content, file_name=fname,
+                mime="text/plain", use_container_width=True,
+                key="gtn_dl_req",
+            )
+        else:
+            st.info("Sin instrucciones DELIVER.")
+
+        if outputs["resumen_deposit"]:
+            content, fname = outputs["resumen_deposit"]
+            nc, nh = outputs["resumen_deposit_stats"]
+            st.download_button(
+                f"⬇ Descargar Resumen DEPOSIT (Client: {nc} / House: {nh})",
+                data=content, file_name=fname,
+                mime="text/plain", use_container_width=True,
+                key="gtn_dl_dep",
+            )
+
+    with col2:
+        if outputs["ret_devolucion"]:
+            content, fname = outputs["ret_devolucion"]
+            _, _, n = outputs["ret_devolucion_refs"]
+            st.download_button(
+                f"⬇ Descargar Ret-devolucion ({n} instrucciones)",
+                data=content, file_name=fname,
+                mime="text/plain", use_container_width=True,
+                key="gtn_dl_ret",
+            )
+        else:
+            st.info("Sin instrucciones RECEIVE.")
+
+        if outputs["resumen_withdraw"]:
+            content, fname = outputs["resumen_withdraw"]
+            nc, nh = outputs["resumen_withdraw_stats"]
+            st.download_button(
+                f"⬇ Descargar Resumen WITHDRAW (Client: {nc} / House: {nh})",
+                data=content, file_name=fname,
+                mime="text/plain", use_container_width=True,
+                key="gtn_dl_wit",
+            )

@@ -55,6 +55,8 @@ def render():
     st.divider()
     if "ag_counter" not in st.session_state:
         st.session_state["ag_counter"] = {}
+    if "ag_result" not in st.session_state:
+        st.session_state["ag_result"] = None
 
     counter = st.session_state["ag_counter"]
     col_ctr, col_btn = st.columns([3, 1])
@@ -69,6 +71,7 @@ def render():
     with col_btn:
         if st.button("Reiniciar contadores", key="ag_reset"):
             st.session_state["ag_counter"] = {}
+            st.session_state["ag_result"] = None
             st.rerun()
 
     st.divider()
@@ -84,8 +87,8 @@ def render():
         st.info(f"Faltan: {', '.join(faltantes)}")
         return
 
-    # ── Ejecución ─────────────────────────────────────────────────────────────
-    if st.button("Generar archivos", type="primary", use_container_width=True):
+    # ── Botón generar ─────────────────────────────────────────────────────────
+    if st.button("Generar archivos", type="primary", use_container_width=True, key="ag_gen"):
         with st.spinner("Generando archivos NASDAQ..."):
             try:
                 from skills.arreglos_garantias.logic import generar_arreglo
@@ -95,104 +98,103 @@ def render():
                     counter_state=st.session_state["ag_counter"],
                 )
                 st.session_state["ag_counter"] = new_counter
-
-                # ── Estado global ─────────────────────────────────────────────
-                n_env = resumen["n_enviar"]
-                n_tra = resumen["n_traer"]
-                partes = []
-                if n_env:
-                    partes.append(f"{n_env} DELIVER")
-                if n_tra:
-                    partes.append(f"{n_tra} RECEIVE")
-                st.success(
-                    f"Archivos generados — fecha {resumen['fecha']} — "
-                    + " | ".join(partes)
-                )
-
-                # ── Métricas ──────────────────────────────────────────────────
-                col_a, col_b, col_c, col_d = st.columns(4)
-                col_a.metric("Instrucciones ENVIAR",    n_env)
-                col_b.metric("Instrucciones TRAER",     n_tra)
-                col_c.metric("Refs AGE", resumen["refs_age"] or "—")
-                col_d.metric("Refs AGD", resumen["refs_agd"] or "—")
-
-                # ── Descargas ─────────────────────────────────────────────────
-                st.subheader("Descargas")
-                col1, col2 = st.columns(2)
-
-                with col1:
-                    # SI2 DELIVER
-                    if outputs["req_envio"]:
-                        content, fname = outputs["req_envio"]
-                        st.download_button(
-                            label=f"⬇ {fname}",
-                            data=content,
-                            file_name=fname,
-                            mime="text/plain",
-                            use_container_width=True,
-                            key="ag_dl_req",
-                        )
-                    else:
-                        st.info("Sin instrucciones DELIVER (no hay filas ENVIAR).")
-
-                    # Resumen DEPOSIT
-                    if outputs["resumen_deposit"]:
-                        content, fname = outputs["resumen_deposit"]
-                        st.download_button(
-                            label=f"⬇ {fname}",
-                            data=content,
-                            file_name=fname,
-                            mime="text/plain",
-                            use_container_width=True,
-                            key="ag_dl_dep",
-                        )
-
-                with col2:
-                    # SI2 RECEIVE
-                    if outputs["ret_devolucion"]:
-                        content, fname = outputs["ret_devolucion"]
-                        st.download_button(
-                            label=f"⬇ {fname}",
-                            data=content,
-                            file_name=fname,
-                            mime="text/plain",
-                            use_container_width=True,
-                            key="ag_dl_ret",
-                        )
-                    else:
-                        st.info("Sin instrucciones RECEIVE (no hay filas TRAER).")
-
-                    # Resumen WITHDRAW
-                    if outputs["resumen_withdraw"]:
-                        content, fname = outputs["resumen_withdraw"]
-                        st.download_button(
-                            label=f"⬇ {fname}",
-                            data=content,
-                            file_name=fname,
-                            mime="text/plain",
-                            use_container_width=True,
-                            key="ag_dl_wit",
-                        )
-
-                # Gallo XLSX — ancho completo
-                if outputs["gallo"]:
-                    content, fname = outputs["gallo"]
-                    st.download_button(
-                        label=f"⬇ {fname}  (ENTREGA GTIAS + DEVOLUCIONES GTIAS)",
-                        data=content,
-                        file_name=fname,
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True,
-                        key="ag_dl_gallo",
-                    )
-
-                # ── Advertencias ──────────────────────────────────────────────
-                if advertencias:
-                    with st.expander(f"⚠ {len(advertencias)} advertencia(s) de procesamiento"):
-                        for adv in advertencias:
-                            st.markdown(f"- {adv}")
-
+                st.session_state["ag_result"] = {
+                    "outputs": outputs,
+                    "resumen": resumen,
+                    "advertencias": advertencias,
+                }
             except Exception as e:
                 st.error(f"Error al procesar: {e}")
                 with st.expander("Detalle del error"):
                     st.code(traceback.format_exc())
+
+    # ── Resultados — persisten en session_state entre reruns ──────────────────
+    result = st.session_state.get("ag_result")
+    if not result:
+        return
+
+    outputs     = result["outputs"]
+    resumen     = result["resumen"]
+    advertencias = result["advertencias"]
+
+    n_env = resumen["n_enviar"]
+    n_tra = resumen["n_traer"]
+    partes = []
+    if n_env:
+        partes.append(f"{n_env} DELIVER")
+    if n_tra:
+        partes.append(f"{n_tra} RECEIVE")
+    st.success(
+        f"Archivos generados — fecha {resumen['fecha']} — "
+        + " | ".join(partes)
+    )
+
+    # ── Métricas ──────────────────────────────────────────────────────────────
+    col_a, col_b, col_c, col_d = st.columns(4)
+    col_a.metric("Instrucciones ENVIAR", n_env)
+    col_b.metric("Instrucciones TRAER",  n_tra)
+    col_c.metric("Refs AGE", resumen["refs_age"] or "—")
+    col_d.metric("Refs AGD", resumen["refs_agd"] or "—")
+
+    # ── Descargas ─────────────────────────────────────────────────────────────
+    st.subheader("Descargas")
+    col1, col2 = st.columns(2)
+
+    with col1:
+        if outputs["req_envio"]:
+            content, fname = outputs["req_envio"]
+            st.download_button(
+                label=f"⬇ {fname}",
+                data=content, file_name=fname,
+                mime="text/plain", use_container_width=True,
+                key="ag_dl_req",
+            )
+        else:
+            st.info("Sin instrucciones DELIVER (no hay filas ENVIAR).")
+
+        if outputs["resumen_deposit"]:
+            content, fname = outputs["resumen_deposit"]
+            st.download_button(
+                label=f"⬇ {fname}",
+                data=content, file_name=fname,
+                mime="text/plain", use_container_width=True,
+                key="ag_dl_dep",
+            )
+
+    with col2:
+        if outputs["ret_devolucion"]:
+            content, fname = outputs["ret_devolucion"]
+            st.download_button(
+                label=f"⬇ {fname}",
+                data=content, file_name=fname,
+                mime="text/plain", use_container_width=True,
+                key="ag_dl_ret",
+            )
+        else:
+            st.info("Sin instrucciones RECEIVE (no hay filas TRAER).")
+
+        if outputs["resumen_withdraw"]:
+            content, fname = outputs["resumen_withdraw"]
+            st.download_button(
+                label=f"⬇ {fname}",
+                data=content, file_name=fname,
+                mime="text/plain", use_container_width=True,
+                key="ag_dl_wit",
+            )
+
+    # Gallo XLSX — ancho completo
+    if outputs["gallo"]:
+        content, fname = outputs["gallo"]
+        st.download_button(
+            label=f"⬇ {fname}  (ENTREGA GTIAS + DEVOLUCIONES GTIAS)",
+            data=content, file_name=fname,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+            key="ag_dl_gallo",
+        )
+
+    # ── Advertencias ──────────────────────────────────────────────────────────
+    if advertencias:
+        with st.expander(f"⚠ {len(advertencias)} advertencia(s) de procesamiento"):
+            for adv in advertencias:
+                st.markdown(f"- {adv}")
