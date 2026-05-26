@@ -19,11 +19,14 @@ html, body, [class*="css"] {
     font-family: 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
 }
 
-/* ── Sidebar — siempre oscuro, ancho mínimo ── */
+/* ── Sidebar — siempre oscuro ── */
 section[data-testid="stSidebar"] {
     background: linear-gradient(180deg, #0d1b2a 0%, #142236 100%);
     border-right: 1px solid #1e3a5f;
-    min-width: 310px !important;
+}
+/* Ancho mínimo solo cuando está expandido — al colapsar el panel principal se expande normal */
+section[data-testid="stSidebar"][aria-expanded="true"] {
+    min-width: 320px !important;
 }
 section[data-testid="stSidebar"] * { color: #dce8f5 !important; }
 section[data-testid="stSidebar"] h1 {
