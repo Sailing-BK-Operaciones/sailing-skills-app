@@ -21,29 +21,22 @@ DATA_START_ROW = 3
 
 
 def _load_accounts_map(accounts_file):
+    """Devuelve dict {ctte_str -> account_id}.
+    El archivo es semicolon-delimited con formato: "AGENTE;COMITENTE;ID_CLEARING".
+    Se filtra por AGENTE == "233" (Sailing).
+    """
     content = accounts_file.read().decode("utf-8-sig")
     mapping = {}
-    for line in content.splitlines():
+    for line in content.splitlines()[1:]:   # saltar header
         line = line.strip().strip('"')
-        parts = line.split(";")
-        if len(parts) != 3 or parts[0] == "AGENTE":
+        if not line:
             continue
-        _, ctte, id_clearing = parts[0].strip(), parts[1].strip(), parts[2].strip()
-        if id_clearing:
-            mapping[id_clearing] = id_clearing
-    # También intentar formato CSV normal (columnas Account Name / Account ID)
-    accounts_file.seek(0)
-    try:
-        df = pd.read_csv(accounts_file, dtype=str)
-        if "Account Name" in df.columns and "Account ID" in df.columns:
-            mapping = {}
-            for _, row in df.iterrows():
-                name   = str(row.get("Account Name", "")).strip()
-                acct_id = str(row.get("Account ID", "")).strip()
-                if name.isdigit() and acct_id:
-                    mapping[name] = acct_id
-    except Exception:
-        pass
+        parts = line.split(";")
+        if len(parts) != 3:
+            continue
+        agente, ctte, acct_id = parts[0].strip(), parts[1].strip(), parts[2].strip()
+        if agente == "233" and ctte.isdigit() and acct_id:
+            mapping[ctte] = acct_id
     return mapping
 
 
