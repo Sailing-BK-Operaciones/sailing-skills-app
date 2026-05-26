@@ -19,12 +19,11 @@ html, body, [class*="css"] {
     font-family: 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
 }
 
-/* ── Sidebar — siempre oscuro, ancho fijo ── */
+/* ── Sidebar — siempre oscuro, ancho mínimo ── */
 section[data-testid="stSidebar"] {
     background: linear-gradient(180deg, #0d1b2a 0%, #142236 100%);
     border-right: 1px solid #1e3a5f;
-    min-width: 280px !important;
-    width: 280px !important;
+    min-width: 310px !important;
 }
 section[data-testid="stSidebar"] * { color: #dce8f5 !important; }
 section[data-testid="stSidebar"] h1 {
