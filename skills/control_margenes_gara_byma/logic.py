@@ -7,7 +7,6 @@ Adaptado de run_control_posiciones.py para funcionar con archivos en memoria.
 
 import io
 import re
-import csv
 from collections import OrderedDict, defaultdict
 from itertools import groupby
 from datetime import date, datetime
@@ -269,20 +268,23 @@ def generar_control(
                 _sat_add(sateclte_ten, ctte, "vtas", cod, abs(qty_cv))
 
     # ── 7. table-accounts CSV → account_id por comitente ─────────────────────
+    # Formato: semicolon-delimited, líneas con comillas opcionales:
+    #   "AGENTE;COMITENTE;ID_CLEARING"
+    # Se filtra por AGENTE == "233" y la clave del dict es el número de CTTE.
     account_id_by_ctte = {}
     try:
         accounts_file.seek(0)
-        text = accounts_file.read().decode("utf-8-sig")
-        reader = csv.reader(io.StringIO(text), quotechar='"', delimiter=',')
-        next(reader, None)   # skip header
-        for row in reader:
-            if len(row) < 4:
+        lines = accounts_file.read().decode("utf-8-sig").splitlines()
+        for line in lines[1:]:          # saltar header
+            line = line.strip().strip('"')
+            if not line:
                 continue
-            netting_type = row[0].strip()
-            account_id   = row[1].strip()
-            account_name = row[3].strip()
-            if netting_type == "NORMAL" and account_name and account_id:
-                account_id_by_ctte[account_name] = account_id
+            parts = line.split(";")
+            if len(parts) != 3:
+                continue
+            agente, ctte_acc, acct_id = parts[0].strip(), parts[1].strip(), parts[2].strip()
+            if agente == "233" and ctte_acc.isdigit() and acct_id:
+                account_id_by_ctte[ctte_acc] = acct_id
     except Exception as e:
         advertencias.append(f"No se pudo leer table-accounts: {e}")
 
