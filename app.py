@@ -19,10 +19,12 @@ html, body, [class*="css"] {
     font-family: 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
 }
 
-/* ── Sidebar — siempre oscuro ── */
+/* ── Sidebar — siempre oscuro, ancho fijo ── */
 section[data-testid="stSidebar"] {
     background: linear-gradient(180deg, #0d1b2a 0%, #142236 100%);
     border-right: 1px solid #1e3a5f;
+    min-width: 280px !important;
+    width: 280px !important;
 }
 section[data-testid="stSidebar"] * { color: #dce8f5 !important; }
 section[data-testid="stSidebar"] h1 {
@@ -335,6 +337,7 @@ OP_SKILLS = [
     "Genera TXT Gara NASDAQ",
     "Collateral Position",
     "Arreglos Garantías",
+    "Control diario Op-SDIB",
     "Control Aforos BYMA",
     "Conversión Dólares Renta",
 ]
@@ -483,6 +486,9 @@ elif skill == "Control Márgenes Gara BYMA":
     render()
 elif skill == "Arreglos Garantías":
     from skills.arreglos_garantias.ui import render
+    render()
+elif skill == "Control diario Op-SDIB":
+    from skills.control_diario_op_sdib.ui import render
     render()
 elif skill == "Conversión Dólares Renta":
     from skills.conversion_dolares_renta.ui import render
