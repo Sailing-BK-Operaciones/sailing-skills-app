@@ -1,5 +1,8 @@
 import streamlit as st
 import traceback
+from pathlib import Path
+
+_TEMPLATE_PATH = Path(__file__).parent / "templates" / "Diario_template.xlsx"
 
 
 def render():
@@ -11,6 +14,15 @@ def render():
     st.divider()
 
     with st.expander("¿Cómo usar esta skill?"):
+        # Descarga de plantilla — siempre disponible (archivo en el repositorio)
+        if _TEMPLATE_PATH.exists():
+            st.download_button(
+                label="⬇ Descargar plantilla Diario.xlsx",
+                data=_TEMPLATE_PATH.read_bytes(),
+                file_name="Diario.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="cdr_dl_template",
+            )
         st.markdown("""
         **Archivo del día — subir acá:**
         - **Diario.xlsx** — planilla con saldos por comitente.
