@@ -1,6 +1,9 @@
 import streamlit as st
 import traceback
+from pathlib import Path
 from skills.shared_ui import shared_or_upload
+
+_TEMPLATE_PATH = Path(__file__).parent / "templates" / "INPUTS_ARREGLOS_GARA_template.xlsx"
 
 
 def render():
@@ -13,6 +16,14 @@ def render():
     st.divider()
 
     with st.expander("¿Cómo usar esta skill?"):
+        if _TEMPLATE_PATH.exists():
+            st.download_button(
+                label="⬇ Descargar plantilla INPUTS ARREGLOS GARA.xlsx",
+                data=_TEMPLATE_PATH.read_bytes(),
+                file_name="INPUTS ARREGLOS GARA.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="ag_dl_template",
+            )
         st.markdown("""
         **Archivo del día — subir acá:**
         - **INPUTS ARREGLOS GARA.xlsx** — Hoja1 con columnas:

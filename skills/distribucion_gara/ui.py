@@ -1,7 +1,10 @@
 import streamlit as st
 import traceback
 from datetime import date
+from pathlib import Path
 from skills.shared_ui import shared_or_upload
+
+_TEMPLATE_PATH = Path(__file__).parent / "templates" / "Saldos_Gara_a_cubrir_template.xlsx"
 
 
 def render():
@@ -14,6 +17,14 @@ def render():
     st.divider()
 
     with st.expander("Como usar esta skill"):
+        if _TEMPLATE_PATH.exists():
+            st.download_button(
+                label="⬇ Descargar plantilla Saldos Gara a cubrir.xlsx",
+                data=_TEMPLATE_PATH.read_bytes(),
+                file_name="Saldos Gara a cubrir.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="dg_dl_template",
+            )
         st.markdown("""
         **Archivos del día** (cambian cada rueda):
         - `SAGACLTE.XLS` — stock de garantías en BYMA (hoja `Saldos_de_Garantias`) — desde Archivos Compartidos

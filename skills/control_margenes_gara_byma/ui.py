@@ -1,6 +1,9 @@
 import streamlit as st
 import traceback
+from pathlib import Path
 from skills.shared_ui import shared_or_upload
+
+_TEMPLATE_PATH = Path(__file__).parent / "templates" / "SALDOS_DEUDORES_template.xlsx"
 
 
 def render():
@@ -13,6 +16,14 @@ def render():
     st.divider()
 
     with st.expander("¿Cómo usar esta skill?"):
+        if _TEMPLATE_PATH.exists():
+            st.download_button(
+                label="⬇ Descargar plantilla SALDOS DEUDORES.xlsx",
+                data=_TEMPLATE_PATH.read_bytes(),
+                file_name="SALDOS DEUDORES.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="cmgb_dl_template",
+            )
         st.markdown("""
         **Archivo del día — subir acá:**
         - **SALDOS DEUDORES.xlsx** — comitentes con monto requerido (col B) y fecha VTO (col C).

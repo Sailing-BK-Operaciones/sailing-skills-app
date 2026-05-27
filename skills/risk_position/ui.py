@@ -1,6 +1,9 @@
 import streamlit as st
 import traceback
+from pathlib import Path
 from skills.shared_ui import shared_or_upload
+
+_TEMPLATE_PATH = Path(__file__).parent / "templates" / "Saldos_Gara_a_cubrir_template.xlsx"
 
 
 def render():
@@ -12,6 +15,14 @@ def render():
     st.divider()
 
     with st.expander("Como usar esta skill"):
+        if _TEMPLATE_PATH.exists():
+            st.download_button(
+                label="⬇ Descargar plantilla Saldos Gara a cubrir.xlsx",
+                data=_TEMPLATE_PATH.read_bytes(),
+                file_name="Saldos Gara a cubrir.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="rp_dl_template",
+            )
         st.markdown("""
         1. Descarga `table-riskPositions_*.csv` desde BYMA Clearing → Risk Positions
         2. Subi el archivo **Saldos Gara a cubrir.xlsx** (el original de Gallo)
