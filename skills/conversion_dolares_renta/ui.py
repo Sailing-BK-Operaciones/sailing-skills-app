@@ -47,6 +47,8 @@ def render():
     st.divider()
     if "cdr_counter" not in st.session_state:
         st.session_state["cdr_counter"] = {}
+    if "cdr_result" not in st.session_state:
+        st.session_state["cdr_result"] = None
 
     counter = st.session_state["cdr_counter"]
     col_ctr, col_btn = st.columns([3, 1])
@@ -61,6 +63,7 @@ def render():
     with col_btn:
         if st.button("Reiniciar contador", key="cdr_reset"):
             st.session_state["cdr_counter"] = {}
+            st.session_state["cdr_result"] = None
             st.rerun()
 
     st.divider()
@@ -69,8 +72,8 @@ def render():
         st.info("Subí el Diario.xlsx para habilitar la generación.")
         return
 
-    # ── Ejecución ─────────────────────────────────────────────────────────────
-    if st.button("Generar archivos", type="primary", use_container_width=True):
+    # ── Botón generar ─────────────────────────────────────────────────────────
+    if st.button("Generar archivos", type="primary", use_container_width=True, key="cdr_gen"):
         with st.spinner("Procesando Diario..."):
             try:
                 from skills.conversion_dolares_renta.logic import generar_conversion
@@ -79,98 +82,104 @@ def render():
                     counter_state=st.session_state["cdr_counter"],
                 )
                 st.session_state["cdr_counter"] = new_counter
-
-                # ── Estado global ─────────────────────────────────────────────
-                if resumen["verificacion_ok"]:
-                    st.success(
-                        f"✓ Archivos generados — {resumen['fecha']}  |  "
-                        f"{resumen['n_ict']} línea(s) ICT  |  "
-                        f"Refs: {resumen['ref_primera']} – {resumen['ref_ultima']}"
-                    )
-                else:
-                    st.warning(
-                        f"⚠ Archivos generados con advertencias — {resumen['fecha']}"
-                    )
-
-                if resumen["contador_continuado"]:
-                    st.info(
-                        f"Contador continuado desde ejecución anterior "
-                        f"(inicio en {resumen['inicio_contador']:04d})."
-                    )
-
-                # ── Métricas ──────────────────────────────────────────────────
-                col_a, col_b, col_c, col_d = st.columns(4)
-                col_a.metric("7K MEP",       resumen["n_7k"],    help="Comitentes col B")
-                col_b.metric("7K USD Cable", resumen["n_cable"], help="Comitentes col C")
-                col_c.metric("10K",          resumen["n_10k"],   help="Comitentes col D")
-                col_d.metric("Líneas ICT",   resumen["n_ict"])
-
-                # ── Descargas ─────────────────────────────────────────────────
-                st.subheader("Descargas")
-
-                # Fila 1: los tres XLS de Gallo
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    if outputs["gallo_7k"]:
-                        content, fname = outputs["gallo_7k"]
-                        st.download_button(
-                            label=f"⬇ {fname}",
-                            data=content,
-                            file_name=fname,
-                            mime="application/vnd.ms-excel",
-                            use_container_width=True,
-                            key="cdr_dl_7k",
-                        )
-                    else:
-                        st.caption("Sin datos 7K MEP")
-
-                with col2:
-                    if outputs["gallo_7k_cable"]:
-                        content, fname = outputs["gallo_7k_cable"]
-                        st.download_button(
-                            label=f"⬇ {fname}",
-                            data=content,
-                            file_name=fname,
-                            mime="application/vnd.ms-excel",
-                            use_container_width=True,
-                            key="cdr_dl_7k_cable",
-                        )
-                    else:
-                        st.caption("Sin datos 7K Cable")
-
-                with col3:
-                    if outputs["gallo_10k"]:
-                        content, fname = outputs["gallo_10k"]
-                        st.download_button(
-                            label=f"⬇ {fname}",
-                            data=content,
-                            file_name=fname,
-                            mime="application/vnd.ms-excel",
-                            use_container_width=True,
-                            key="cdr_dl_10k",
-                        )
-                    else:
-                        st.caption("Sin datos 10K")
-
-                # Fila 2: ICT — ancho completo
-                if outputs["ict"]:
-                    content, fname = outputs["ict"]
-                    st.download_button(
-                        label=f"⬇ {fname}  ({resumen['n_ict']} transferencias)",
-                        data=content,
-                        file_name=fname,
-                        mime="text/plain",
-                        use_container_width=True,
-                        key="cdr_dl_ict",
-                    )
-
-                # ── Advertencias ──────────────────────────────────────────────
-                if advertencias:
-                    with st.expander(f"⚠ {len(advertencias)} advertencia(s)"):
-                        for adv in advertencias:
-                            st.markdown(f"- {adv}")
-
+                st.session_state["cdr_result"] = {
+                    "outputs":      outputs,
+                    "resumen":      resumen,
+                    "advertencias": advertencias,
+                }
             except Exception as e:
                 st.error(f"Error al procesar: {e}")
                 with st.expander("Detalle del error"):
                     st.code(traceback.format_exc())
+
+    # ── Resultados — persisten en session_state entre reruns ──────────────────
+    result = st.session_state.get("cdr_result")
+    if not result:
+        return
+
+    outputs      = result["outputs"]
+    resumen      = result["resumen"]
+    advertencias = result["advertencias"]
+
+    # ── Estado global ─────────────────────────────────────────────────────────
+    if resumen["verificacion_ok"]:
+        st.success(
+            f"✓ Archivos generados — {resumen['fecha']}  |  "
+            f"{resumen['n_ict']} línea(s) ICT  |  "
+            f"Refs: {resumen['ref_primera']} – {resumen['ref_ultima']}"
+        )
+    else:
+        st.warning(f"⚠ Archivos generados con advertencias — {resumen['fecha']}")
+
+    if resumen["contador_continuado"]:
+        st.info(
+            f"Contador continuado desde ejecución anterior "
+            f"(inicio en {resumen['inicio_contador']:04d})."
+        )
+
+    # ── Métricas ──────────────────────────────────────────────────────────────
+    col_a, col_b, col_c, col_d = st.columns(4)
+    col_a.metric("7K MEP",       resumen["n_7k"],    help="Comitentes col B")
+    col_b.metric("7K USD Cable", resumen["n_cable"], help="Comitentes col C")
+    col_c.metric("10K",          resumen["n_10k"],   help="Comitentes col D")
+    col_d.metric("Líneas ICT",   resumen["n_ict"])
+
+    # ── Descargas ─────────────────────────────────────────────────────────────
+    st.subheader("Descargas")
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        if outputs["gallo_7k"]:
+            content, fname = outputs["gallo_7k"]
+            st.download_button(
+                label=f"⬇ {fname}",
+                data=content, file_name=fname,
+                mime="application/vnd.ms-excel",
+                use_container_width=True,
+                key="cdr_dl_7k",
+            )
+        else:
+            st.caption("Sin datos 7K MEP")
+
+    with col2:
+        if outputs["gallo_7k_cable"]:
+            content, fname = outputs["gallo_7k_cable"]
+            st.download_button(
+                label=f"⬇ {fname}",
+                data=content, file_name=fname,
+                mime="application/vnd.ms-excel",
+                use_container_width=True,
+                key="cdr_dl_7k_cable",
+            )
+        else:
+            st.caption("Sin datos 7K Cable")
+
+    with col3:
+        if outputs["gallo_10k"]:
+            content, fname = outputs["gallo_10k"]
+            st.download_button(
+                label=f"⬇ {fname}",
+                data=content, file_name=fname,
+                mime="application/vnd.ms-excel",
+                use_container_width=True,
+                key="cdr_dl_10k",
+            )
+        else:
+            st.caption("Sin datos 10K")
+
+    # ICT — ancho completo
+    if outputs["ict"]:
+        content, fname = outputs["ict"]
+        st.download_button(
+            label=f"⬇ {fname}  ({resumen['n_ict']} transferencias)",
+            data=content, file_name=fname,
+            mime="text/plain",
+            use_container_width=True,
+            key="cdr_dl_ict",
+        )
+
+    # ── Advertencias ──────────────────────────────────────────────────────────
+    if advertencias:
+        with st.expander(f"⚠ {len(advertencias)} advertencia(s)"):
+            for adv in advertencias:
+                st.markdown(f"- {adv}")
