@@ -1,24 +1,36 @@
 name: Keepalive — Streamlit Cloud
 
-# Pinea la app dos veces por día para evitar que Streamlit Cloud
-# la duerma por inactividad (umbral: 7 días sin tráfico).
-# Corre a las 06:00 y 18:00 UTC = 03:00 y 15:00 ART (UTC-3).
+# Pinea la app cada 4 horas (6 veces por día) para evitar que Streamlit Cloud
+# la duerma por inactividad (umbral de la plataforma: 7 días sin tráfico).
+# Si la app está durmiendo al momento del ping, reintenta hasta 3 veces
+# esperando que despierte antes de dar el job por finalizado.
+#
+# Horarios UTC → ART (UTC-3):
+#   00:00 → 21:00 | 04:00 → 01:00 | 08:00 → 05:00
+#   12:00 → 09:00 | 16:00 → 13:00 | 20:00 → 17:00
 
 on:
   schedule:
-    - cron: '0 6,18 * * *'   # dos veces al día
-  workflow_dispatch:           # disparo manual desde la pestaña Actions
+    - cron: '0 0,4,8,12,16,20 * * *'   # cada 4 horas
+  workflow_dispatch:                     # disparo manual desde la pestaña Actions
 
 jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
-      - name: Ping app
+      - name: Ping app — con reintentos si está despertando
         run: |
-          echo "Pinging https://sailing-bk-operaciones.streamlit.app/ ..."
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 45 \
-            "https://sailing-bk-operaciones.streamlit.app/")
-          echo "HTTP status: $STATUS"
-          # 200 = despierta y respondiendo
-          # 503 = durmiendo (Streamlit la está despertando en este momento)
-          # Ambos casos son normales; el ping ya resetea el contador de inactividad.
+          URL="https://sailing-bk-operaciones.streamlit.app/"
+          echo "Pinging $URL ..."
+          for i in 1 2 3; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 60 "$URL")
+            echo "Intento $i — HTTP status: $STATUS"
+            if [ "$STATUS" = "200" ]; then
+              echo "App activa y respondiendo."
+              exit 0
+            fi
+            echo "App durmiendo o iniciando (status $STATUS) — esperando 30s antes de reintentar..."
+            sleep 30
+          done
+          echo "App no respondió con 200 en 3 intentos — puede estar despertando en background."
+          exit 0
