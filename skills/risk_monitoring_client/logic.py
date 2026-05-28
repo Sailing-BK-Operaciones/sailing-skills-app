@@ -9,7 +9,6 @@ from io import BytesIO
 from datetime import datetime
 
 import xlrd
-import pdfplumber
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.formatting.rule import CellIsRule
@@ -22,7 +21,6 @@ def generar_reporte(
     pc_file,
     especies_file,
     sagaclte_file,
-    pdf_aforos_file,
 ) -> BytesIO:
     # ── Tabla de cuentas ─────────────────────────────────────────────────────
     accounts_map = {}
@@ -89,24 +87,25 @@ def generar_reporte(
         if code5:
             precios[code5] = price
 
-    # ── Tipos de precio (ESPECIES.XLS) ────────────────────────────────────────
+    # ── Tipos de precio y aforos BYMA (ESPECIES.XLS) ─────────────────────────
+    # Col 26 (Aforo) = haircut BYMA API; aforo_byma = (100 - haircut) / 100.0
     tipo_precio_map = {}
+    byma_aforos     = {}
     wb_esp = xlrd.open_workbook(file_contents=especies_file.read())
     ws_esp = wb_esp.sheet_by_name("Datos_Fijos_Especies")
     for r in range(1, ws_esp.nrows):
-        code = str(ws_esp.cell_value(r, 0)).strip().lstrip("'").zfill(5)
-        tipo = str(ws_esp.cell_value(r, 4)).strip()
-        if code:
-            tipo_precio_map[code] = tipo
-
-    # ── Aforos BYMA (PDF) ─────────────────────────────────────────────────────
-    byma_aforos = {}
-    pdf_bytes = pdf_aforos_file.read()
-    with pdfplumber.open(BytesIO(pdf_bytes)) as pdf:
-        full_text = "\n".join(p.extract_text() for p in pdf.pages if p.extract_text())
-    pat_aforo = re.compile(r"([A-Za-z][A-Za-z0-9._-]*)\s+(\d{2,6})\s+(\d+)%\s+\d+%")
-    for m in pat_aforo.finditer(full_text):
-        byma_aforos[m.group(2).zfill(5)] = int(m.group(3)) / 100.0
+        row   = ws_esp.row_values(r)
+        code  = str(row[0]).strip().lstrip("'").zfill(5)
+        if not code:
+            continue
+        tipo  = str(row[4]).strip()
+        tipo_precio_map[code] = tipo
+        try:
+            haircut = int(float(row[26])) if len(row) > 26 and row[26] else 0
+        except (ValueError, TypeError):
+            haircut = 0
+        if haircut > 0:
+            byma_aforos[code] = (100 - haircut) / 100.0
 
     # ── Garantías por comitente (SAGACLTE.XLS) ────────────────────────────────
     garantias_by_ctte = {}

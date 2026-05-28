@@ -1,145 +1,85 @@
 import streamlit as st
 import traceback
-from datetime import datetime, timezone, timedelta
-from shared_store import get_meta
 from skills.shared_ui import shared_or_upload
-
-AR_TZ = timezone(timedelta(hours=-3))
-
-
-def _indicador_circular():
-    """
-    Muestra de forma prominente la fecha de la última circular BYMA cargada
-    y un alerta de antigüedad. La circular se actualiza ~cada 2 semanas.
-    """
-    nombre_pdf, fecha_str = get_meta("shared_pdf_aforos")
-
-    if not fecha_str:
-        st.error(
-            "**PDF de aforos BYMA no cargado.**  "
-            "Ir a Archivos Compartidos y subir la circular antes de ejecutar."
-        )
-        return
-
-    try:
-        fecha_carga = datetime.strptime(fecha_str, "%d/%m/%Y %H:%M").replace(tzinfo=AR_TZ)
-        hoy  = datetime.now(AR_TZ)
-        dias = (hoy - fecha_carga).days
-
-        if dias == 0:
-            delta_str = "cargada hoy"
-        elif dias == 1:
-            delta_str = "cargada ayer"
-        else:
-            delta_str = f"hace **{dias} días**"
-
-        archivo_str = f" · `{nombre_pdf}`" if nombre_pdf else ""
-
-        if dias <= 14:
-            st.success(
-                f"📄 Circular BYMA vigente — última carga: **{fecha_str}** ({delta_str}){archivo_str}"
-            )
-        elif dias <= 28:
-            st.warning(
-                f"📄 Circular BYMA — última carga: **{fecha_str}** ({delta_str}){archivo_str}  \n"
-                f"Verificar si BYMA publicó una versión más reciente (se actualiza cada ~2 semanas)."
-            )
-        else:
-            st.error(
-                f"📄 Circular BYMA posiblemente desactualizada — última carga: **{fecha_str}** ({delta_str}){archivo_str}  \n"
-                f"Descargar la última versión del sitio de BYMA y recargar en Archivos Compartidos."
-            )
-    except Exception:
-        # Fallback si el formato de fecha cambia
-        st.info(f"📄 PDF de aforos BYMA cargado: {fecha_str}")
 
 
 def render():
     st.title("Control Aforos BYMA")
     st.markdown(
-        "Compara la circular de aforos BYMA (PDF) con el maestro de especies de Gallo (ESPECIES.XLS). "
-        "Detecta diferencias de lista/aforo y especies aceptadas por BYMA que no están dadas de alta en Gallo."
+        "Compara los aforos informados por la API BYMA (col 26 de ESPECIES.XLS) "
+        "con las listas asignadas en Gallo. "
+        "Detecta diferencias de lista/aforo y especies aceptadas por BYMA "
+        "que no tienen lista asignada en Gallo."
     )
-
-    # ── Indicador de actualización — siempre visible al ingresar ─────────────
-    _indicador_circular()
-
     st.divider()
 
     with st.expander("¿Cómo usar esta skill?"):
         st.markdown("""
-        **Archivos de referencia** (se toman automáticamente de Archivos Compartidos):
-        - **ESPECIES.XLS** — maestro de especies: código CVSA y Lista asignada (col F)
-        - **PDF de aforos BYMA** — circular con las especies aceptadas como garantía y su aforo (%)
+        **Archivo de referencia** (se toma automáticamente de Archivos Compartidos):
+        - **ESPECIES.XLS** — maestro de especies: código CVSA, Lista asignada (col F)
+          y haircut BYMA API (col 26). Aforo BYMA = 100 − haircut.
 
         **Output — Excel DIFERENCIAS AFOROS.xlsx:**
-        - Hoja **Diferencias Aforo**: especies cuya Lista en Gallo no coincide con el aforo del PDF.
-          Columna *Aforo Sailing* en rojo (valor actual), *Lista Sugerida* en verde (corrección sugerida).
-        - Hoja **No Encontradas** *(si aplica)*: especies del PDF que no están en el maestro de Gallo.
-
-        **Output — FALTANTE en GALLO.txt** *(si aplica)*: listado de especies para dar de alta en Gallo.
+        - Hoja **Diferencias Aforo**: especies cuya Lista en Gallo no coincide con el aforo BYMA.
+          Columna *Aforo Lista Actual* en rojo, *Lista Sugerida* en verde (corrección).
+        - Hoja **Sin Lista Gallo**: especies que BYMA acepta pero no tienen lista en Gallo.
+        - Hoja **Lista Sin BYMA** *(informacional)*: especies con lista en Gallo que BYMA ya no acepta.
 
         **Tablas Lista → Aforo:**
 
         | Segmento | Listas | Aforos |
         |---|---|---|
         | Renta Variable | 1–8 | 85 %–30 % |
-        | Renta Fija Públicos | 11–17 | 90 %–60 % |
+        | Renta Fija Públicos | 10–17 | 95 %–60 % |
         | Renta Fija Privados | 22–27 | 85 %–60 % |
         | Letras y Bonos del Tesoro | 85 / 90 / 95 | 85 % / 90 % / 95 % |
         """)
 
-    # ── Inputs (ambos desde Archivos Compartidos) ─────────────────────────────
-    col1, col2 = st.columns(2)
-    with col1:
-        especies_file = shared_or_upload(
-            "shared_especies", "Maestro de especies (ESPECIES.XLS)",
-            ["xls", "xlsx"], "caf_especies"
-        )
-    with col2:
-        pdf_file = shared_or_upload(
-            "shared_pdf_aforos", "PDF de aforos BYMA",
-            ["pdf"], "caf_pdf"
-        )
+    # ── Input (desde Archivos Compartidos) ────────────────────────────────────
+    especies_file = shared_or_upload(
+        "shared_especies", "Maestro de especies (ESPECIES.XLS)",
+        ["xls", "xlsx"], "caf_especies"
+    )
 
     st.divider()
 
-    # ── Validación ────────────────────────────────────────────────────────────
-    faltantes_inp = []
-    if not especies_file: faltantes_inp.append("ESPECIES.XLS")
-    if not pdf_file:      faltantes_inp.append("PDF de aforos BYMA")
-
-    if faltantes_inp:
-        st.info(f"Cargá desde Archivos Compartidos: {', '.join(faltantes_inp)}")
+    if not especies_file:
+        st.info("Cargá ESPECIES.XLS desde Archivos Compartidos para ejecutar el control.")
         return
 
     # ── Ejecución ─────────────────────────────────────────────────────────────
     if st.button("Ejecutar control", type="primary", use_container_width=True):
-        with st.spinner("Procesando PDF y maestro de especies..."):
+        with st.spinner("Procesando maestro de especies..."):
             try:
                 from skills.control_aforos_byma.logic import generar_control
-                xlsx_bytes, txt_faltantes, resumen, advertencias = generar_control(
-                    especies_file, pdf_file
-                )
+                xlsx_bytes, resumen, advertencias = generar_control(especies_file)
 
-                # Mensaje de estado
                 n_dif  = resumen["diferencias"]
-                n_falt = resumen["faltantes"]
-                if n_dif == 0 and n_falt == 0:
-                    st.success("✓ Sin diferencias ni faltantes — maestro alineado con circular BYMA.")
+                n_sl   = resumen["sin_lista"]
+                n_lsb  = resumen["lista_sin_byma"]
+                if n_dif == 0 and n_sl == 0:
+                    st.success(
+                        f"✓ Sin diferencias ni faltantes — maestro alineado con BYMA API.  "
+                        f"({resumen['total_byma']} especies en lista BYMA)"
+                    )
                 else:
                     partes = []
-                    if n_dif:  partes.append(f"**{n_dif}** diferencia(s) de aforo")
-                    if n_falt: partes.append(f"**{n_falt}** especie(s) faltante(s) en Gallo")
+                    if n_dif: partes.append(f"**{n_dif}** diferencia(s) de aforo")
+                    if n_sl:  partes.append(f"**{n_sl}** especie(s) sin lista en Gallo")
                     st.warning(" · ".join(partes))
 
-                # Métricas
-                col_a, col_b, col_c = st.columns(3)
-                col_a.metric("Especies en PDF",      resumen["total_pdf"])
-                col_b.metric("Diferencias de aforo", n_dif)
-                col_c.metric("Faltantes en Gallo",   n_falt)
+                col_a, col_b, col_c, col_d = st.columns(4)
+                col_a.metric("En lista BYMA",        resumen["total_byma"])
+                col_b.metric("OK (coinciden)",        resumen["total_ok"])
+                col_c.metric("Diferencias de aforo",  n_dif)
+                col_d.metric("Sin lista en Gallo",    n_sl)
 
-                # Descargas
+                if n_lsb:
+                    st.info(
+                        f"{n_lsb} especie(s) con lista en Gallo que BYMA ya no acepta "
+                        "(hoja informacional 'Lista Sin BYMA')."
+                    )
+
                 st.download_button(
                     label="⬇ Descargar DIFERENCIAS AFOROS.xlsx",
                     data=xlsx_bytes,
@@ -147,16 +87,7 @@ def render():
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     use_container_width=True,
                 )
-                if txt_faltantes:
-                    st.download_button(
-                        label="⬇ Descargar FALTANTE en GALLO.txt",
-                        data=txt_faltantes.encode("utf-8"),
-                        file_name="FALTANTE en GALLO.txt",
-                        mime="text/plain",
-                        use_container_width=True,
-                    )
 
-                # Advertencias
                 if advertencias:
                     with st.expander(f"⚠ {len(advertencias)} advertencia(s) de procesamiento"):
                         for adv in advertencias:

@@ -420,7 +420,7 @@ from shared_store import is_loaded as _is_loaded
 _SHARED_KEYS = [
     "shared_pc", "shared_sagaclte", "shared_sateclte", "shared_contbole",
     "shared_saldos_nasdaq", "shared_especies", "shared_accounts",
-    "shared_pdf_aforos", "shared_aforo_sail", "shared_tabcompb",
+    "shared_aforo_sail", "shared_tabcompb",
 ]
 _n = sum(1 for k in _SHARED_KEYS if _is_loaded(k))
 _total = len(_SHARED_KEYS)

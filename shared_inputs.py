@@ -11,9 +11,8 @@ DEL_DIA = [
 ]
 
 REFERENCIA = [
-    {"key": "shared_especies",   "label": "ESPECIES.XLS",                       "desc": "Maestro de especies de Gallo (lista, aforo SAIL, tipo precio)",  "types": ["xls", "xlsx"]},
+    {"key": "shared_especies",   "label": "ESPECIES.XLS",                       "desc": "Maestro de especies de Gallo (lista, aforo SAIL, tipo precio; col 26 = haircut BYMA API)", "types": ["xls", "xlsx"]},
     {"key": "shared_accounts",   "label": "table-accounts_*.csv",               "desc": "Account ID por comitente (BYMA Clearing)",                       "types": ["csv"]},
-    {"key": "shared_pdf_aforos", "label": "PDF aforos BYMA",                    "desc": "Listas de Especies Aceptadas como Garantía (circular BYMA)",     "types": ["pdf"]},
     {"key": "shared_aforo_sail", "label": "tabla listas gallo vs aforos.xlsx",  "desc": "Aforo SAIL por lista Gallo",                                     "types": ["xlsx"]},
     {"key": "shared_tabcompb",   "label": "TABCOMPB.XLS",                       "desc": "Clasificador de tipos de operación (activa ops CI en CONTBOLE)", "types": ["xls", "xlsx"]},
 ]

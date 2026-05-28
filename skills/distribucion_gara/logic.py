@@ -10,7 +10,6 @@ import math
 import csv
 import xlrd
 import openpyxl
-import pdfplumber
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 from datetime import date, datetime
@@ -20,7 +19,6 @@ def generar_reporte(
     sagaclte_file,
     sateclte_file,
     especies_file,
-    pdf_aforos_file,
     pc_file,
     saldos_file,
     contbole_file,
@@ -135,6 +133,11 @@ def generar_reporte(
             lam_min = float(str(row[6]).strip()) if row[6] else 0.0
         except (ValueError, TypeError):
             lam_min = 0.0
+        # Col 26: haircut BYMA API → aforo_byma = (100 - haircut) / 100.0
+        try:
+            haircut = int(float(row[26])) if len(row) > 26 and row[26] else 0
+        except (ValueError, TypeError):
+            haircut = 0
         especies[cod] = {
             "ticker": nemo or cod,
             "nombre": nom,
@@ -142,24 +145,16 @@ def generar_reporte(
             "tipo_precio": tprc,
             "aforo_sail": aforo,
             "lam_min": lam_min,
+            "aforo_byma": (100 - haircut) / 100.0 if haircut > 0 else 0.0,
         }
 
-    # ── STEP 4: BYMA PDF ────────────────────────────────────────────────────────
-    pdf_aforos_file.seek(0)
-    pdf_bytes = pdf_aforos_file.read()
-    byma_dict = {}
-    all_text = []
-    with pdfplumber.open(BytesIO(pdf_bytes)) as pdf:
-        for page in pdf.pages:
-            text = page.extract_text()
-            if text:
-                all_text.append(text)
-    full_pdf = "\n".join(all_text)
-    pat = re.compile(r"([A-Za-z0-9][A-Za-z0-9._-]*)\s+(\d{2,6})\s+(\d+)%\s+\d+%")
-    for m in pat.finditer(full_pdf):
-        codigo = m.group(2).zfill(5)
-        aforo  = int(m.group(3)) / 100.0
-        byma_dict[codigo] = (m.group(1), aforo)
+    # ── STEP 4: Aforos BYMA desde ESPECIES.XLS col 26 ───────────────────────────
+    # byma_dict[cod] = (ticker, aforo_float)
+    byma_dict = {
+        cod: (esp["ticker"], esp["aforo_byma"])
+        for cod, esp in especies.items()
+        if esp["aforo_byma"] > 0.0
+    }
 
     # ── STEP 5: SAGACLTE.XLS ────────────────────────────────────────────────────
     sagaclte_file.seek(0)

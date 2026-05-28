@@ -22,8 +22,7 @@ def render():
 
         **Archivos de referencia** (se toman desde Archivos Compartidos si ya están disponibles):
         - `PC*.XLS` — precios de cierre de Gallo
-        - `ESPECIES.XLS` — maestro de especies (tipo de precio: Normal / Porc.)
-        - PDF de aforos BYMA (`Listas de Especies Aceptadas como Garantía.pdf`)
+        - `ESPECIES.XLS` — maestro de especies (tipo de precio: Normal / Porc.; col 26 = haircut BYMA API)
 
         **Opcionales — activan hojas de conciliación BC vs Gallo:**
         - `SAGACLTE.XLS` — stock de garantías por comitente (desde Archivos Compartidos)
@@ -45,13 +44,11 @@ def render():
 
     # ── Archivos de referencia ────────────────────────────────────────────────
     st.subheader("Archivos de referencia")
-    col3, col4, col5 = st.columns(3)
+    col3, col4 = st.columns(2)
     with col3:
         pc_file = shared_or_upload("shared_pc", "Precios de cierre (PC*.XLS)", ["xls", "xlsx"], "cp_pc")
     with col4:
         especies_file = shared_or_upload("shared_especies", "ESPECIES.XLS", ["xls", "xlsx"], "cp_esp")
-    with col5:
-        pdf_file = shared_or_upload("shared_pdf_aforos", "PDF de aforos BYMA", ["pdf"], "cp_pdf")
 
     # ── Opcionales (conciliación) ─────────────────────────────────────────────
     with st.expander("Conciliación BC vs Gallo (opcional)"):
@@ -72,7 +69,7 @@ def render():
     st.divider()
 
     requeridos = {"CSV Collateral": csv_file, "PC*.XLS": pc_file,
-                  "ESPECIES.XLS": especies_file, "PDF aforos": pdf_file}
+                  "ESPECIES.XLS": especies_file}
     faltantes = [k for k, v in requeridos.items() if v is None]
 
     if faltantes:
@@ -86,7 +83,7 @@ def render():
                 try:
                     from skills.Collateral_position.logic import generar_reporte
                     xlsx_buf, r = generar_reporte(
-                        csv_file, pc_file, especies_file, pdf_file,
+                        csv_file, pc_file, especies_file,
                         sagaclte_file=sagaclte_file,
                         accounts_file=accounts_file,
                         tc_usd=float(tc_usd),
@@ -102,8 +99,6 @@ def render():
 
                     if r["n_sin_precio"] > 0:
                         st.warning(f"{r['n_sin_precio']} especies sin precio de cierre (fondo amarillo en el Excel).")
-                    if r["n_aforos"] == 0:
-                        st.warning("PDF de aforos no produjo datos — verificar formato del archivo.")
                     if r["tiene_conc"]:
                         st.info("Hojas de conciliación BC vs Gallo incluidas.")
 

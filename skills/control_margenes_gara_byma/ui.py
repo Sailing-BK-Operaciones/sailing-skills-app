@@ -31,8 +31,8 @@ def render():
           Un comitente puede tener múltiples filas (una por vencimiento).
 
         **Archivos de referencia** (de Archivos Compartidos):
-        - SAGACLTE.XLS, SATECLTE.XLS, ESPECIES.XLS, PC\\*.XLS, TABCOMPB.XLS,
-          PDF de aforos BYMA, table-accounts\\*.csv, CONTBOLE.XLS
+        - SAGACLTE.XLS, SATECLTE.XLS, ESPECIES.XLS (col 26 = haircut BYMA API), PC\\*.XLS,
+          TABCOMPB.XLS, table-accounts\\*.csv, CONTBOLE.XLS
 
         **Output — `Control-Posiciones-Gara-DD-MM-AAAA.xlsx`:**
         - Hoja **RESUMEN**: una fila por comitente con totales, estado CUBIERTO/DESCUBIERTO y Account ID.
@@ -65,7 +65,6 @@ def render():
         accounts_file = shared_or_upload("shared_accounts",   "table-accounts_*.csv", ["csv"],         "cmgb_acc")
     with col3:
         contbole_file = shared_or_upload("shared_contbole",   "CONTBOLE.XLS",         ["xls", "xlsx"], "cmgb_cont")
-        pdf_file      = shared_or_upload("shared_pdf_aforos", "PDF de aforos BYMA",   ["pdf"],         "cmgb_pdf")
 
     st.divider()
 
@@ -77,7 +76,6 @@ def render():
     if not especies_file: faltantes.append("ESPECIES.XLS")
     if not tabcompb_file: faltantes.append("TABCOMPB.XLS")
     if not pc_file:       faltantes.append("PC*.XLS")
-    if not pdf_file:      faltantes.append("PDF de aforos BYMA")
     if not contbole_file: faltantes.append("CONTBOLE.XLS")
     if not accounts_file: faltantes.append("table-accounts_*.csv")
 
@@ -98,7 +96,6 @@ def render():
                     especies_file = especies_file,
                     tabcompb_file = tabcompb_file,
                     pc_file       = pc_file,
-                    pdf_aforos_file = pdf_file,
                     accounts_file = accounts_file,
                 )
 

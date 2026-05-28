@@ -20,9 +20,8 @@ def render():
         **Archivos de referencia** (se cargan desde Archivos Compartidos si ya están disponibles):
         - `table-accounts_*.csv` — Account ID por comitente
         - `PC*.XLS` — precios de cierre de Gallo
-        - `ESPECIES.XLS` — maestro de especies de Gallo
+        - `ESPECIES.XLS` — maestro de especies (col 26 = haircut BYMA API; aforo = (100−haircut)/100)
         - `SAGACLTE.XLS` — saldos de garantías por comitente
-        - PDF de aforos BYMA
         """)
 
     st.subheader("Archivo del dia")
@@ -40,8 +39,6 @@ def render():
         especies_file = shared_or_upload("shared_especies",   "Maestro de especies (ESPECIES.XLS)", ["xls", "xlsx"], "rmc_esp")
         sagaclte_file = shared_or_upload("shared_sagaclte",   "Garantías por comitente (SAGACLTE.XLS)", ["xls", "xlsx"], "rmc_saga")
 
-    pdf_aforos = shared_or_upload("shared_pdf_aforos", "PDF de aforos BYMA", ["pdf"], "rmc_pdf")
-
     st.divider()
 
     faltantes = []
@@ -50,7 +47,6 @@ def render():
     if not pc_file:       faltantes.append("PC*.XLS")
     if not especies_file: faltantes.append("ESPECIES.XLS")
     if not sagaclte_file: faltantes.append("SAGACLTE.XLS")
-    if not pdf_aforos:    faltantes.append("PDF aforos")
 
     if faltantes:
         st.info(f"Faltan: {', '.join(faltantes)}")
@@ -60,7 +56,7 @@ def render():
                 try:
                     from skills.risk_monitoring_client.logic import generar_reporte
                     resultado, fecha_output, n_data, grand_total, total_garantias = generar_reporte(
-                        csv_grouping, csv_accounts, pc_file, especies_file, sagaclte_file, pdf_aforos
+                        csv_grouping, csv_accounts, pc_file, especies_file, sagaclte_file
                     )
 
                     st.success("Reporte generado correctamente")

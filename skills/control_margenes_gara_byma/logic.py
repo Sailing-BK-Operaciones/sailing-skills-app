@@ -13,7 +13,6 @@ from datetime import date, datetime
 
 import xlrd
 import openpyxl
-import pdfplumber
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
@@ -85,7 +84,6 @@ def generar_control(
     especies_file,    # ESPECIES.XLS           — shared
     tabcompb_file,    # TABCOMPB.XLS           — shared
     pc_file,          # PC*.XLS                — shared
-    pdf_aforos_file,  # PDF aforos BYMA        — shared
     accounts_file,    # table-accounts_*.csv   — shared
 ):
     """
@@ -100,13 +98,16 @@ def generar_control(
     fecha_str     = FECHA_PROCESO.strftime("%d-%m-%Y")
 
     # ── 1. ESPECIES.XLS ───────────────────────────────────────────────────────
+    # También lee col 26 (haircut BYMA API) para construir byma_dict.
+    # aforo_byma = (100 - haircut) / 100.0
     especies_file.seek(0)
     wb_esp = xlrd.open_workbook(file_contents=especies_file.read())
     hoja_esp = ("Datos_Fijos_Especies"
                 if "Datos_Fijos_Especies" in wb_esp.sheet_names()
                 else wb_esp.sheet_names()[0])
     sh_esp = wb_esp.sheet_by_name(hoja_esp)
-    especies = {}
+    especies  = {}
+    byma_dict = {}   # cod -> (ticker, aforo_float)
     for r in range(1, sh_esp.nrows):
         row  = sh_esp.row_values(r)
         cod  = str(row[0]).strip().zfill(5)
@@ -119,6 +120,13 @@ def generar_control(
             lam_min = 0.0
         especies[cod] = {"ticker": nemo or cod, "nombre": nom,
                          "tipo_precio": tprc, "lam_min": lam_min}
+        # Col 26: haircut BYMA API
+        try:
+            haircut = int(float(row[26])) if len(row) > 26 and row[26] else 0
+        except (ValueError, TypeError):
+            haircut = 0
+        if haircut > 0:
+            byma_dict[cod] = (nemo or cod, (100 - haircut) / 100.0)
 
     # ── 2. TABCOMPB.XLS ───────────────────────────────────────────────────────
     op_tipo = {}  # abrev -> 'COMPRA' | 'VENTA'
@@ -140,25 +148,7 @@ def generar_control(
     except Exception as e:
         advertencias.append(f"No se pudo leer TABCOMPB.XLS: {e}")
 
-    # ── 3. PDF aforos BYMA ────────────────────────────────────────────────────
-    byma_dict = {}
-    pdf_aforos_file.seek(0)
-    all_text = []
-    with pdfplumber.open(pdf_aforos_file) as pdf:
-        for page in pdf.pages:
-            text = page.extract_text()
-            if text:
-                all_text.append(text)
-    full_pdf = "\n".join(all_text)
-    pat_pdf = re.compile(r"([A-Za-z0-9][A-Za-z0-9._-]*)\s+(\d{2,6})\s+(\d+)%\s+\d+%")
-    for m in pat_pdf.finditer(full_pdf):
-        codigo = m.group(2).zfill(5)
-        aforo  = int(m.group(3)) / 100.0
-        byma_dict[codigo] = (m.group(1), aforo)
-    if not byma_dict:
-        advertencias.append("No se extrajeron especies del PDF de aforos. Verificar formato del PDF.")
-
-    # ── 4. PC*.XLS ────────────────────────────────────────────────────────────
+    # ── 3. PC*.XLS ────────────────────────────────────────────────────────────
     pc_file.seek(0)
     wb_pc = xlrd.open_workbook(file_contents=pc_file.read())
     hoja_pc = ("Precios_de_Cierre"

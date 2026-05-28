@@ -10,7 +10,6 @@ from collections import OrderedDict
 from datetime import date
 
 import xlrd
-import pdfplumber
 import openpyxl
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
@@ -209,19 +208,6 @@ def _leer_accounts(accounts_file):
         except Exception:
             pass
     return ctte_to_account_id
-
-
-def _leer_pdf_aforos(pdf_file):
-    byma_dict = {}
-    if pdf_file is None:
-        return byma_dict
-    pdf_bytes = pdf_file.read()
-    with pdfplumber.open(BytesIO(pdf_bytes)) as pdf:
-        full_text = "\n".join(p.extract_text() for p in pdf.pages if p.extract_text())
-    pat = re.compile(r"([A-Za-z0-9][A-Za-z0-9._-]*)\s+(\d{2,6})\s+(\d+)%\s+\d+%")
-    for m in pat.finditer(full_text):
-        byma_dict[m.group(2).zfill(5)] = int(m.group(3)) / 100.0
-    return byma_dict
 
 
 def _leer_precios(pc_file):
@@ -489,7 +475,6 @@ def generar_reporte(
     csv_file,
     pc_file,
     especies_file,
-    pdf_aforos_file,
     sagaclte_file=None,
     accounts_file=None,
     tc_usd: float = 1400.0,
@@ -498,7 +483,7 @@ def generar_reporte(
     """
     Devuelve (BytesIO xlsx, dict resumen).
 
-    Requeridos: csv_file, pc_file, especies_file, pdf_aforos_file
+    Requeridos: csv_file, pc_file, especies_file
     Opcionales: sagaclte_file, accounts_file  (activan hojas de conciliación)
     """
     if fecha_proceso is None:
@@ -508,7 +493,6 @@ def generar_reporte(
     collateral, cash_by_node = _leer_collateral_csv(csv_file)
     especies       = _leer_especies(especies_file)
     precios        = _leer_precios(pc_file)
-    byma_dict      = _leer_pdf_aforos(pdf_aforos_file)
     gallo_by_node  = _leer_sagaclte(sagaclte_file, especies)
     ctte_to_acc_id = _leer_accounts(accounts_file)
 
@@ -566,9 +550,6 @@ def generar_reporte(
 
     n_sin_precio  = sum(1 for items in enriched.values()
                         for it in items if not it["is_usd"] and it["precio"] == 0)
-    n_sin_aforo   = sum(1 for items in enriched.values()
-                        for it in items if not it["is_usd"] and it["precio"] > 0
-                        and byma_dict.get(it["cvsa"].zfill(5), 0) == 0)
 
     resumen = {
         "fecha":           fecha_proceso.strftime("%d/%m/%Y"),
@@ -576,10 +557,8 @@ def generar_reporte(
         "grand_monto":     grand_monto,
         "n_nodes":         len(enriched),
         "n_sin_precio":    n_sin_precio,
-        "n_sin_aforo":     n_sin_aforo,
         "tiene_conc":      tiene_conciliacion,
         "summary":         summary_data,   # [(short, n_sec, monto), ...]
-        "n_aforos":        len(byma_dict),
         "n_precios":       len(precios),
     }
     return output, resumen

@@ -33,8 +33,7 @@ def render():
         - `Saldos Gara a cubrir.xlsx` — comitentes con monto requerido en ARS
 
         **Archivos de referencia** (cambian ocasionalmente):
-        - `ESPECIES.XLS` — maestro de especies — desde Archivos Compartidos
-        - PDF de aforos BYMA — desde Archivos Compartidos
+        - `ESPECIES.XLS` — maestro de especies (col 26 = haircut BYMA API) — desde Archivos Compartidos
         - `CONTBOLE.XLS` — boletos del día desde Gallo (hoja `Control_de_Boletos`)
         - `tabla listas gallo vs aforos.xlsx` — aforo SAIL por lista Gallo
         - `table-accounts_*.csv` — Account ID por comitente — desde Archivos Compartidos
@@ -61,7 +60,6 @@ def render():
     col3, col4 = st.columns(2)
     with col3:
         especies_file   = shared_or_upload("shared_especies", "ESPECIES.XLS", ["xls", "xlsx"], "dg_esp")
-        pdf_file        = shared_or_upload("shared_pdf_aforos", "PDF aforos BYMA", ["pdf"], "dg_pdf")
         contbole_file   = shared_or_upload("shared_contbole", "CONTBOLE.XLS (boletos del día)", ["xls", "xlsx"], "dg_cont")
     with col4:
         aforo_sail_file = shared_or_upload("shared_aforo_sail", "tabla listas gallo vs aforos.xlsx", ["xlsx"], "dg_aforo")
@@ -94,7 +92,6 @@ def render():
         "PC*.XLS":           pc_file,
         "Saldos Gara":       saldos_file,
         "ESPECIES.XLS":      especies_file,
-        "PDF aforos":        pdf_file,
         "CONTBOLE.XLS":      contbole_file,
         "Tabla aforo SAIL":  aforo_sail_file,
         "table-accounts":    accounts_file,
@@ -119,7 +116,6 @@ def render():
                     sagaclte_file=sagaclte_file,
                     sateclte_file=sateclte_file,
                     especies_file=especies_file,
-                    pdf_aforos_file=pdf_file,
                     pc_file=pc_file,
                     saldos_file=saldos_file,
                     contbole_file=contbole_file,

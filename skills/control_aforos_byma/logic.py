@@ -1,25 +1,28 @@
 """
 Control Aforos BYMA vs Gallo
-Compara el PDF de especies aceptadas como garantía (circular BYMA)
-con el maestro de especies ESPECIES.XLS.
+Lee haircut desde col 26 (Aforo) de ESPECIES.XLS — informado por la API BYMA via Gallo.
+Aforo BYMA = 100 - haircut  (ej. haircut 15% -> aforo 85%)
+El PDF de circular BYMA ya no se utiliza.
 """
 
 import io
 import re
+import datetime
+
 import xlrd
-import pdfplumber
 import openpyxl
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
 
 # ─── Tablas Lista <-> Aforo BYMA ─────────────────────────────────────────────
+# Aforo = 100 - haircut
 TABLAS = {
     "Renta Variable": {
         1: 85, 2: 80, 3: 75, 4: 70, 5: 60, 6: 50, 7: 40, 8: 30,
     },
     "Renta Fija Publicos": {
-        11: 90, 12: 85, 13: 80, 14: 75, 15: 70, 16: 65, 17: 60,
+        10: 95, 11: 90, 12: 85, 13: 80, 14: 75, 15: 70, 16: 65, 17: 60,
     },
     "Renta Fija Privados": {
         22: 85, 23: 80, 24: 75, 25: 70, 26: 65, 27: 60,
@@ -29,33 +32,37 @@ TABLAS = {
     },
 }
 
-SECCION_A_TABLA = {
-    ("Renta Fija",     "Titulos Publicos"):           "Renta Fija Publicos",
-    ("Renta Fija",     "Obligaciones Negociables"):   "Renta Fija Privados",
-    ("Renta Fija",     "Letras del Tesoro Nacional"): "Letras y Bonos del tesoro",
-    ("Renta Variable", "Acciones Locales"):            "Renta Variable",
-    ("Renta Variable", "Cedears"):                     "Renta Variable",
-}
 
-# Identificadores de sección normalizados (ASCII, minúsculas)
-SECCION_HEADERS = {
-    "renta fija":                  ("tipo",    "Renta Fija"),
-    "ttulos pblicos":              ("subtipo", "Titulos Publicos"),   # "Títulos Públicos" mangled
-    "obligaciones negociables":    ("subtipo", "Obligaciones Negociables"),
-    "letras del tesoro nacional":  ("subtipo", "Letras del Tesoro Nacional"),
-    "renta variable":              ("tipo",    "Renta Variable"),
-    "acciones locales":            ("subtipo", "Acciones Locales"),
-    "cedears":                     ("subtipo", "Cedears"),
-}
-
-STOP_PATTERNS = ["cuotapartes de", "fondos comunes de"]
-
-# Regex para fila de especie: TICKER  CVSA  AFORO% [...]
-ESPECIE_RE = re.compile(r"^([A-Za-z0-9]+)\s+(\d+)\s+(\d+)%")
+def _tabla_para_lista(lista):
+    if 1 <= lista <= 8:       return "Renta Variable"
+    if 10 <= lista <= 17:     return "Renta Fija Publicos"
+    if 22 <= lista <= 27:     return "Renta Fija Privados"
+    if lista in (85, 90, 95): return "Letras y Bonos del tesoro"
+    return None
 
 
-def _ascii_only(s):
-    return re.sub(r"[^a-zA-Z0-9 ]", "", s).lower().strip()
+def _tabla_para_tipo(tipo_col2, tipo_activo):
+    t2 = (tipo_col2 or "").strip().upper()
+    ta = (tipo_activo or "").lower()
+    if t2 == "LETR":
+        return "Letras y Bonos del tesoro"
+    if t2 == "O/N":
+        return "Renta Fija Privados"
+    if t2 == "PUBL":
+        if any(x in ta for x in ["letra", "tesoro", "17-letra"]):
+            return "Letras y Bonos del tesoro"
+        return "Renta Fija Publicos"
+    if t2 in ("PRIV", "FDO."):
+        return "Renta Variable"
+    if t2 == "FIDE":
+        return "Renta Fija Publicos"
+    if any(x in ta for x in ["obliga", "negoci", "05-obli"]):
+        return "Renta Fija Privados"
+    if any(x in ta for x in ["letra", "tesoro"]):
+        return "Letras y Bonos del tesoro"
+    if any(x in ta for x in ["publi", "bono", "provincial", "03-titulo", "titulos de deuda", "19-titulo"]):
+        return "Renta Fija Publicos"
+    return "Renta Variable"
 
 
 def _aforo_para_lista(tabla, lista):
@@ -63,12 +70,13 @@ def _aforo_para_lista(tabla, lista):
 
 
 def _lista_para_aforo(tabla, aforo_pct):
-    for lista, aforo in TABLAS.get(tabla, {}).items():
-        if aforo == aforo_pct:
-            return lista
+    for l, a in TABLAS.get(tabla, {}).items():
+        if a == aforo_pct:
+            return l
     return "REVISAR"
 
 
+# ─── Helpers xlrd ────────────────────────────────────────────────────────────
 def _xls_int(cell):
     if cell.ctype == xlrd.XL_CELL_NUMBER:
         return int(cell.value)
@@ -81,23 +89,64 @@ def _xls_int(cell):
     return None
 
 
-def generar_control(especies_file, pdf_file):
+def _xls_str(cell):
+    if cell.ctype in (xlrd.XL_CELL_EMPTY, xlrd.XL_CELL_BLANK):
+        return ""
+    return str(cell.value).strip()
+
+
+_DATE_RE = re.compile(r'\b(\d{2})[/\-](\d{2})[/\-](\d{2,4})\b')
+
+
+def _fecha_vencimiento(wb_xls, ws_xls, row_idx):
+    """Devuelve date de vencimiento o None."""
+    cell_v = ws_xls.cell(row_idx, 15)
+    if cell_v.ctype == xlrd.XL_CELL_DATE:
+        try:
+            return xlrd.xldate_as_datetime(cell_v.value, wb_xls.datemode).date()
+        except Exception:
+            pass
+    elif cell_v.ctype == xlrd.XL_CELL_NUMBER and cell_v.value > 1000:
+        try:
+            return xlrd.xldate_as_datetime(cell_v.value, wb_xls.datemode).date()
+        except Exception:
+            pass
+    elif cell_v.ctype == xlrd.XL_CELL_TEXT:
+        s = str(cell_v.value).strip()
+        for fmt in ("%d/%m/%Y", "%d/%m/%y", "%d-%m-%Y", "%d-%m-%y"):
+            try:
+                return datetime.datetime.strptime(s, fmt).date()
+            except ValueError:
+                pass
+    nombre = _xls_str(ws_xls.cell(row_idx, 1))
+    m = _DATE_RE.search(nombre)
+    if m:
+        d, mo, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        if y < 100:
+            y += 2000
+        try:
+            return datetime.date(y, mo, d)
+        except ValueError:
+            pass
+    return None
+
+
+def generar_control(especies_file):
     """
     Parámetros
     ----------
     especies_file : file-like  — ESPECIES.XLS
-    pdf_file      : file-like  — PDF aforos BYMA
 
     Retorna
     -------
-    xlsx_bytes       : bytes          Excel con diferencias
-    txt_faltantes    : str | None     Texto FALTANTE en GALLO (None si no hay)
-    resumen          : dict           Conteos para la UI
-    advertencias     : list[str]      Avisos de procesamiento
+    xlsx_bytes   : bytes     Excel con diferencias
+    resumen      : dict      Conteos para la UI
+    advertencias : list[str] Avisos de procesamiento
     """
+    HOY = datetime.date.today()
     advertencias = []
 
-    # ── 1. Leer ESPECIES.XLS ─────────────────────────────────────────────────
+    # ── Leer ESPECIES.XLS ────────────────────────────────────────────────────
     especies_file.seek(0)
     wb_xls = xlrd.open_workbook(file_contents=especies_file.read())
     hoja = ("Datos_Fijos_Especies"
@@ -105,177 +154,109 @@ def generar_control(especies_file, pdf_file):
             else wb_xls.sheet_names()[0])
     ws_xls = wb_xls.sheet_by_name(hoja)
 
-    especies_dict  = {}   # cvsa_int -> lista_int
-    codigos_vistos = {}
-    for row_idx in range(1, ws_xls.nrows):
-        cell_a = ws_xls.cell(row_idx, 0)   # Código CVSA
-        cell_f = ws_xls.cell(row_idx, 5)   # Lista
+    diferencias    = []   # haircut > 0, lista > 0, pero lista no coincide
+    sin_lista      = []   # haircut > 0, lista = 0  → necesita lista asignada en Gallo
+    lista_sin_byma = []   # lista > 0, haircut = 0, NO vencido → informacional
+    vencidos_filtrados = 0
+    total_byma = 0
+    total_ok   = 0
+
+    for r in range(1, ws_xls.nrows):
+        cell_a = ws_xls.cell(r, 0)
         if cell_a.ctype in (xlrd.XL_CELL_EMPTY, xlrd.XL_CELL_BLANK):
             continue
-        cvsa_int = _xls_int(cell_a)
-        if cvsa_int is None:
-            advertencias.append(f"Código CVSA no numérico fila {row_idx+1} — omitida.")
+
+        cvsa = _xls_int(cell_a)
+        if cvsa is None:
             continue
-        if cvsa_int in codigos_vistos:
-            advertencias.append(
-                f"Código CVSA duplicado: {cvsa_int} "
-                f"filas {codigos_vistos[cvsa_int]+1} y {row_idx+1}."
-            )
-        codigos_vistos[cvsa_int] = row_idx
-        lista_val = _xls_int(cell_f)
-        if lista_val is None:
-            lista_val = 0
-        especies_dict[cvsa_int] = lista_val
 
-    # ── 2. Parsear PDF línea a línea ─────────────────────────────────────────
-    pdf_file.seek(0)
-    pdf_name    = getattr(pdf_file, "name", "aforos.pdf")
-    fecha_match = re.search(r"(\d{4}-\d{2}-\d{2})", pdf_name)
-    ref_circular = fecha_match.group(1) if fecha_match else pdf_name
+        ticker_norm = _xls_str(ws_xls.cell(r, 9))   # col Norm.
+        nombre      = _xls_str(ws_xls.cell(r, 1))    # Nombre_de_la_Especie
+        tipo_col2   = _xls_str(ws_xls.cell(r, 2))    # Tipo
+        tipo_activo = _xls_str(ws_xls.cell(r, 18))   # Tipo_de_Activo
+        lista       = _xls_int(ws_xls.cell(r, 5)) or 0
 
-    especies_pdf   = []
-    tipo_actual    = None
-    subtipo_actual = None
+        # Col 26 = haircut BYMA API
+        try:
+            raw26 = ws_xls.cell(r, 26)
+            haircut = _xls_int(raw26) or 0
+        except IndexError:
+            haircut = 0
 
-    with pdfplumber.open(pdf_file) as pdf:
-        stop = False
-        for page in pdf.pages:
-            if stop:
-                break
-            text       = page.extract_text() or ""
-            text_ascii = _ascii_only(text)
-            for pat in STOP_PATTERNS:
-                if pat in text_ascii:
-                    stop = True
-                    break
+        ticker = ticker_norm or str(cvsa)
 
-            for line in text.split("\n"):
-                line_s    = line.strip()
-                line_norm = _ascii_only(line_s)
-                if not line_s:
-                    continue
+        if haircut > 0:
+            total_byma += 1
+            aforo_byma = 100 - haircut
 
-                # Detectar encabezado de sección
-                if line_norm in SECCION_HEADERS:
-                    campo, valor = SECCION_HEADERS[line_norm]
-                    if campo == "tipo":
-                        tipo_actual    = valor
-                        subtipo_actual = None
-                    else:
-                        subtipo_actual = valor
-                    continue
-
-                # Stop pattern en línea individual
-                for pat in STOP_PATTERNS:
-                    if pat in line_norm:
-                        stop = True
-                        break
-                if stop:
-                    break
-
-                # Intentar parsear como especie
-                m = ESPECIE_RE.match(line_s)
-                if not m:
-                    continue
-                ticker     = m.group(1)
-                cvsa_int   = int(m.group(2))
-                aforo_byma = int(m.group(3))
-
-                if not tipo_actual or not subtipo_actual:
-                    continue
-                tabla_nombre = SECCION_A_TABLA.get((tipo_actual, subtipo_actual))
-                if tabla_nombre is None:
+            if lista == 0:
+                tabla_inf = _tabla_para_tipo(tipo_col2, tipo_activo)
+                lista_sug = _lista_para_aforo(tabla_inf, aforo_byma) if tabla_inf else "REVISAR"
+                sin_lista.append({
+                    "cvsa": cvsa, "ticker": ticker, "nombre": nombre,
+                    "tipo_activo": tipo_activo, "tipo_col2": tipo_col2,
+                    "haircut": haircut, "aforo_byma": aforo_byma,
+                    "lista_sugerida": lista_sug,
+                })
+            else:
+                tabla = _tabla_para_lista(lista)
+                if tabla is None:
                     advertencias.append(
-                        f"Sección no reconocida: '{tipo_actual}'/'{subtipo_actual}'. "
-                        f"'{ticker}' ({cvsa_int}) omitida."
+                        f"Lista {lista} fuera de rango — CVSA {cvsa} ({ticker}), "
+                        f"haircut={haircut}%. Especie omitida del control."
                     )
                     continue
-                especies_pdf.append({
-                    "nombre":     ticker,
-                    "cvsa":       cvsa_int,
-                    "tipo":       tipo_actual,
-                    "subtipo":    subtipo_actual,
-                    "tabla":      tabla_nombre,
-                    "aforo_byma": aforo_byma,
-                })
 
-    # ── 3. Faltantes en Gallo ────────────────────────────────────────────────
-    faltantes = [esp for esp in especies_pdf if esp["cvsa"] not in especies_dict]
+                aforo_sailing = _aforo_para_lista(tabla, lista)
+                if aforo_sailing is None:
+                    advertencias.append(
+                        f"Lista {lista} no mapeada en tabla '{tabla}' — CVSA {cvsa}. Omitida."
+                    )
+                    continue
 
-    txt_faltantes = None
-    if faltantes:
-        lines = [
-            f"Control de Especies - Circular BYMA {ref_circular}",
-            "=" * 60, "",
-            "Las siguientes especies aparecen en el PDF de BYMA pero NO",
-            "estan registradas en el maestro ESPECIES.XLS de Gallo:", "",
-            f"{'Especie':<15} {'Tipo':<15} {'Subtipo':<25} {'Codigo CVSA':>12}",
-            "-" * 70,
-        ]
-        for esp in faltantes:
-            lines.append(
-                f"{esp['nombre']:<15} {esp['tipo']:<15} {esp['subtipo']:<25} {esp['cvsa']:>12}"
-            )
-        lines += [
-            "", "-" * 70,
-            f"Total faltantes: {len(faltantes)}", "",
-            "ACCION REQUERIDA: Dar de alta estas especies en Gallo",
-            "y actualizar ESPECIES.XLS.",
-        ]
-        txt_faltantes = "\n".join(lines)
+                if aforo_sailing == aforo_byma:
+                    total_ok += 1
+                else:
+                    lista_sug = _lista_para_aforo(tabla, aforo_byma)
+                    diferencias.append({
+                        "cvsa": cvsa, "ticker": ticker, "nombre": nombre,
+                        "tipo_activo": tipo_activo, "tabla": tabla,
+                        "haircut": haircut, "aforo_byma": aforo_byma,
+                        "lista_actual": lista, "aforo_sailing": aforo_sailing,
+                        "diferencia_pp": aforo_byma - aforo_sailing,
+                        "lista_sugerida": lista_sug,
+                    })
+                    if lista_sug == "REVISAR":
+                        advertencias.append(
+                            f"Lista sugerida REVISAR — CVSA {cvsa} ({ticker}), "
+                            f"aforo BYMA={aforo_byma}%, tabla '{tabla}'."
+                        )
 
-    # ── 4. Control de aforos ─────────────────────────────────────────────────
-    diferencias         = []
-    no_encontradas_ctrl = []
-
-    for esp in especies_pdf:
-        cvsa = esp["cvsa"]
-        if cvsa not in especies_dict:
-            no_encontradas_ctrl.append(esp)
-            continue
-        lista_actual = especies_dict[cvsa]
-        tabla_nombre = esp["tabla"]
-        aforo_byma   = esp["aforo_byma"]
-
-        # Lista 0 o no mapeada → especie sin lista asignada, no es diferencia
-        if lista_actual == 0 or lista_actual not in TABLAS.get(tabla_nombre, {}):
-            continue
-
-        aforo_sailing = _aforo_para_lista(tabla_nombre, lista_actual)
-        if aforo_sailing != aforo_byma:
-            lista_sugerida = _lista_para_aforo(tabla_nombre, aforo_byma)
-            diferencia_pp  = aforo_byma - aforo_sailing
-            diferencias.append({
-                "nombre":         esp["nombre"],
-                "tipo":           esp["tipo"],
-                "subtipo":        esp["subtipo"],
-                "cvsa":           cvsa,
-                "aforo_byma":     aforo_byma,
-                "aforo_sailing":  aforo_sailing,
-                "lista_actual":   lista_actual,
-                "diferencia_pp":  diferencia_pp,
-                "lista_sugerida": lista_sugerida,
+        elif lista > 0:
+            fvenc = _fecha_vencimiento(wb_xls, ws_xls, r)
+            if fvenc is not None and fvenc < HOY:
+                vencidos_filtrados += 1
+                continue
+            lista_sin_byma.append({
+                "cvsa": cvsa, "ticker": ticker, "nombre": nombre,
+                "tipo_activo": tipo_activo, "lista": lista,
             })
-            if lista_sugerida == "REVISAR":
-                advertencias.append(
-                    f"Lista sugerida REVISAR: '{esp['nombre']}' ({cvsa}), "
-                    f"aforo BYMA={aforo_byma}%, no existe en tabla '{tabla_nombre}'."
-                )
 
-    # ── 5. Generar Excel ─────────────────────────────────────────────────────
-    AZUL_FILL   = PatternFill("solid", fgColor="4472C4")
-    ROJO_FILL   = PatternFill("solid", fgColor="C00000")
-    VERDE_FILL  = PatternFill("solid", fgColor="00B050")
-    ROJO_CELDA  = PatternFill("solid", fgColor="FF0000")
-    BLANCO_FONT = Font(name="Arial", bold=True, color="FFFFFF")
-    NORMAL_FONT = Font(name="Arial", size=11)
-    BORDER_THIN = Border(
+    # ─── Estilos ──────────────────────────────────────────────────────────────
+    AZUL_FILL    = PatternFill("solid", fgColor="4472C4")
+    ROJO_FILL    = PatternFill("solid", fgColor="C00000")
+    NARANJA_FILL = PatternFill("solid", fgColor="ED7D31")
+    VERDE_FILL   = PatternFill("solid", fgColor="00B050")
+    ROJO_CELDA   = PatternFill("solid", fgColor="FF0000")
+    BLANCO_FONT  = Font(name="Arial", bold=True, color="FFFFFF")
+    NORMAL_FONT  = Font(name="Arial", size=11)
+    BORDER_THIN  = Border(
         left=Side(style="thin"), right=Side(style="thin"),
         top=Side(style="thin"),  bottom=Side(style="thin"),
     )
     CENTER = Alignment(horizontal="center", vertical="center")
 
-    def aplicar_encabezado(ws, headers, fill=None):
+    def _aplicar_encabezado(ws, headers, fill=None):
         f = fill or AZUL_FILL
         for col, h in enumerate(headers, 1):
             cell = ws.cell(row=1, column=col, value=h)
@@ -284,7 +265,7 @@ def generar_control(especies_file, pdf_file):
             cell.alignment = CENTER
             cell.border = BORDER_THIN
 
-    def aplicar_fila(ws, fila, valores, fills=None, fonts=None):
+    def _aplicar_fila(ws, fila, valores, fills=None, fonts=None):
         for col, v in enumerate(valores, 1):
             cell = ws.cell(row=fila, column=col, value=v)
             cell.font      = (fonts or {}).get(col, NORMAL_FONT)
@@ -293,62 +274,77 @@ def generar_control(especies_file, pdf_file):
             if fills and fills.get(col):
                 cell.fill = fills[col]
 
+    def _autofit(ws, col_widths):
+        for col, w in enumerate(col_widths, 1):
+            ws.column_dimensions[get_column_letter(col)].width = w
+
+    # ─── Generar Excel ────────────────────────────────────────────────────────
     wb = openpyxl.Workbook()
 
-    # Hoja "Diferencias Aforo"
+    # Hoja 1: Diferencias Aforo
     ws_dif = wb.active
     ws_dif.title = "Diferencias Aforo"
     headers_dif = [
-        "Especie", "Tipo", "Subtipo", "Codigo CVSA",
-        "Aforo BYMA (PDF) %", "Aforo Sailing (Lista) %",
-        "Lista Actual", "Diferencia (pp)", "LISTA SUGERIDA",
+        "Ticker", "Nombre", "Tipo Activo", "Codigo CVSA",
+        "Aforo BYMA %", "Lista Actual (Gallo)", "Aforo Lista Actual %",
+        "Diferencia (pp)", "LISTA SUGERIDA",
     ]
-    aplicar_encabezado(ws_dif, headers_dif)
-    ws_dif.cell(1, 9).fill = VERDE_FILL  # col LISTA SUGERIDA en verde
+    _aplicar_encabezado(ws_dif, headers_dif)
+    ws_dif.cell(1, 9).fill = VERDE_FILL
 
     for i, d in enumerate(diferencias, 2):
         diff_str = (f"+{d['diferencia_pp']}" if d["diferencia_pp"] > 0
                     else str(d["diferencia_pp"])) + "pp"
-        aplicar_fila(ws_dif, i, [
-            d["nombre"], d["tipo"], d["subtipo"], d["cvsa"],
-            d["aforo_byma"], d["aforo_sailing"],
-            d["lista_actual"], diff_str, d["lista_sugerida"],
-        ], fills={6: ROJO_CELDA, 9: VERDE_FILL},
+        _aplicar_fila(ws_dif, i, [
+            d["ticker"], d["nombre"], d["tipo_activo"], d["cvsa"],
+            d["aforo_byma"], d["lista_actual"], d["aforo_sailing"],
+            diff_str, d["lista_sugerida"],
+        ], fills={7: ROJO_CELDA, 9: VERDE_FILL},
            fonts={9: Font(name="Arial", color="FFFFFF", bold=True)})
 
-    col_widths = [15, 15, 25, 14, 20, 22, 14, 16, 16]
-    for col, w in enumerate(col_widths, 1):
-        ws_dif.column_dimensions[get_column_letter(col)].width = w
+    _autofit(ws_dif, [12, 30, 25, 14, 15, 22, 22, 16, 16])
 
-    # Hoja "No Encontradas" (especies del PDF no presentes en Gallo)
-    if no_encontradas_ctrl:
-        ws_nf = wb.create_sheet("No Encontradas")
-        headers_nf = [
-            "Especie", "Tipo", "Subtipo",
-            "Codigo CVSA", "Aforo BYMA (PDF) %", "LISTA SUGERIDA",
-        ]
-        aplicar_encabezado(ws_nf, headers_nf, fill=ROJO_FILL)
-        ws_nf.cell(1, 6).fill = VERDE_FILL
-        for i, esp in enumerate(no_encontradas_ctrl, 2):
-            lista_sug = _lista_para_aforo(esp["tabla"], esp["aforo_byma"])
-            aplicar_fila(ws_nf, i, [
-                esp["nombre"], esp["tipo"], esp["subtipo"],
-                esp["cvsa"], esp["aforo_byma"], lista_sug,
-            ], fills={6: VERDE_FILL},
-               fonts={6: Font(name="Arial", color="FFFFFF", bold=True)})
-        col_widths_nf = [15, 15, 25, 14, 22, 16]
-        for col, w in enumerate(col_widths_nf, 1):
-            ws_nf.column_dimensions[get_column_letter(col)].width = w
+    # Hoja 2: Sin Lista en Gallo
+    ws_sl = wb.create_sheet("Sin Lista Gallo")
+    headers_sl = [
+        "Ticker", "Nombre", "Tipo Activo", "Codigo CVSA",
+        "Haircut BYMA %", "Aforo BYMA %", "LISTA SUGERIDA",
+    ]
+    _aplicar_encabezado(ws_sl, headers_sl, fill=ROJO_FILL)
+    ws_sl.cell(1, 7).fill = VERDE_FILL
+
+    for i, esp in enumerate(sin_lista, 2):
+        _aplicar_fila(ws_sl, i, [
+            esp["ticker"], esp["nombre"], esp["tipo_activo"], esp["cvsa"],
+            esp["haircut"], esp["aforo_byma"], esp["lista_sugerida"],
+        ], fills={7: VERDE_FILL},
+           fonts={7: Font(name="Arial", color="FFFFFF", bold=True)})
+
+    _autofit(ws_sl, [12, 30, 25, 14, 16, 15, 16])
+
+    # Hoja 3: Lista Sin BYMA (informacional, vencidos excluidos)
+    ws_lb = wb.create_sheet("Lista Sin BYMA")
+    headers_lb = ["Ticker", "Nombre", "Tipo Activo", "Codigo CVSA", "Lista Gallo"]
+    _aplicar_encabezado(ws_lb, headers_lb, fill=NARANJA_FILL)
+
+    for i, esp in enumerate(lista_sin_byma, 2):
+        _aplicar_fila(ws_lb, i, [
+            esp["ticker"], esp["nombre"], esp["tipo_activo"], esp["cvsa"], esp["lista"],
+        ])
+
+    _autofit(ws_lb, [12, 30, 25, 14, 14])
 
     buf = io.BytesIO()
     wb.save(buf)
     xlsx_bytes = buf.getvalue()
 
     resumen = {
-        "pdf_name":    pdf_name,
-        "total_pdf":   len(especies_pdf),
-        "faltantes":   len(faltantes),
-        "diferencias": len(diferencias),
+        "total_byma":    total_byma,
+        "total_ok":      total_ok,
+        "diferencias":   len(diferencias),
+        "sin_lista":     len(sin_lista),
+        "lista_sin_byma": len(lista_sin_byma),
+        "vencidos_filtrados": vencidos_filtrados,
     }
 
-    return xlsx_bytes, txt_faltantes, resumen, advertencias
+    return xlsx_bytes, resumen, advertencias
