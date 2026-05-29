@@ -48,6 +48,10 @@ def render():
         ["xls", "xlsx"], "caf_especies"
     )
 
+    # ── Session state ─────────────────────────────────────────────────────────
+    if "caf_result" not in st.session_state:
+        st.session_state["caf_result"] = None
+
     st.divider()
 
     if not especies_file:
@@ -60,61 +64,75 @@ def render():
             try:
                 from skills.control_aforos_byma.logic import generar_control
                 xlsx_dif_bytes, xlsx_rc_bytes, resumen, advertencias = generar_control(especies_file)
-
-                n_dif = resumen["diferencias"]
-                n_sl  = resumen["sin_lista"]
-                n_lsb = resumen["lista_sin_byma"]
-
-                if n_dif == 0 and n_sl == 0:
-                    st.success(
-                        f"✓ Sin diferencias ni faltantes — maestro alineado con BYMA API.  "
-                        f"({resumen['total_byma']} especies en lista BYMA)"
-                    )
-                else:
-                    partes = []
-                    if n_dif: partes.append(f"**{n_dif}** diferencia(s) de aforo")
-                    if n_sl:  partes.append(f"**{n_sl}** especie(s) sin lista en Gallo")
-                    st.warning(" · ".join(partes))
-
-                col_a, col_b, col_c, col_d = st.columns(4)
-                col_a.metric("En lista BYMA",       resumen["total_byma"])
-                col_b.metric("OK (coinciden)",       resumen["total_ok"])
-                col_c.metric("Diferencias de aforo", n_dif)
-                col_d.metric("Sin lista en Gallo",   n_sl)
-
-                if n_lsb:
-                    st.info(
-                        f"{n_lsb} especie(s) con lista en Gallo que BYMA ya no acepta "
-                        "(hoja informacional 'Lista Sin BYMA')."
-                    )
-
-                # ── Descargas ─────────────────────────────────────────────────
-                col_dl1, col_dl2 = st.columns(2)
-                with col_dl1:
-                    st.download_button(
-                        label="⬇ Descargar DIFERENCIAS AFOROS.xlsx",
-                        data=xlsx_dif_bytes,
-                        file_name="DIFERENCIAS AFOROS.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True,
-                    )
-                with col_dl2:
-                    from datetime import date as _date
-                    fecha_rc = _date.today().strftime("%d-%m-%y")
-                    st.download_button(
-                        label=f"⬇ Descargar Reporte Garantias BYMA {fecha_rc}.xlsx",
-                        data=xlsx_rc_bytes,
-                        file_name=f"Reporte Garantias BYMA {fecha_rc}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True,
-                    )
-
-                if advertencias:
-                    with st.expander(f"⚠ {len(advertencias)} advertencia(s) de procesamiento"):
-                        for adv in advertencias:
-                            st.markdown(f"- {adv}")
-
+                st.session_state["caf_result"] = {
+                    "xlsx_dif": xlsx_dif_bytes,
+                    "xlsx_rc":  xlsx_rc_bytes,
+                    "resumen":  resumen,
+                    "advertencias": advertencias,
+                }
             except Exception as e:
                 st.error(f"Error al procesar: {e}")
                 with st.expander("Detalle del error"):
                     st.code(traceback.format_exc())
+
+    # ── Resultados — persisten en session_state entre reruns ──────────────────
+    result = st.session_state.get("caf_result")
+    if not result:
+        return
+
+    resumen      = result["resumen"]
+    advertencias = result["advertencias"]
+    n_dif = resumen["diferencias"]
+    n_sl  = resumen["sin_lista"]
+    n_lsb = resumen["lista_sin_byma"]
+
+    if n_dif == 0 and n_sl == 0:
+        st.success(
+            f"✓ Sin diferencias ni faltantes — maestro alineado con BYMA API.  "
+            f"({resumen['total_byma']} especies en lista BYMA)"
+        )
+    else:
+        partes = []
+        if n_dif: partes.append(f"**{n_dif}** diferencia(s) de aforo")
+        if n_sl:  partes.append(f"**{n_sl}** especie(s) sin lista en Gallo")
+        st.warning(" · ".join(partes))
+
+    col_a, col_b, col_c, col_d = st.columns(4)
+    col_a.metric("En lista BYMA",       resumen["total_byma"])
+    col_b.metric("OK (coinciden)",       resumen["total_ok"])
+    col_c.metric("Diferencias de aforo", n_dif)
+    col_d.metric("Sin lista en Gallo",   n_sl)
+
+    if n_lsb:
+        st.info(
+            f"{n_lsb} especie(s) con lista en Gallo que BYMA ya no acepta "
+            "(hoja informacional 'Lista Sin BYMA')."
+        )
+
+    # ── Descargas ─────────────────────────────────────────────────────────────
+    col_dl1, col_dl2 = st.columns(2)
+    with col_dl1:
+        st.download_button(
+            label="⬇ Descargar DIFERENCIAS AFOROS.xlsx",
+            data=result["xlsx_dif"],
+            file_name="DIFERENCIAS AFOROS.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+            key="caf_dl_dif",
+        )
+    with col_dl2:
+        from datetime import date as _date
+        fecha_rc = _date.today().strftime("%d-%m-%y")
+        st.download_button(
+            label=f"⬇ Descargar Reporte Garantias BYMA {fecha_rc}.xlsx",
+            data=result["xlsx_rc"],
+            file_name=f"Reporte Garantias BYMA {fecha_rc}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+            key="caf_dl_rc",
+        )
+
+    if advertencias:
+        with st.expander(f"⚠ {len(advertencias)} advertencia(s) de procesamiento"):
+            for adv in advertencias:
+                st.markdown(f"- {adv}")

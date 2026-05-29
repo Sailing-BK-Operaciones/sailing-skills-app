@@ -43,9 +43,15 @@ def _render_group(files: list):
                 else:
                     st.caption("⬜ Sin cargar")
 
-                # Guardar solo si es un archivo nuevo (evita loop)
+                # Guardar solo si es un archivo nuevo (evita loop en rerun)
+                # Usa el file_id interno de Streamlit: UUID único por evento de upload,
+                # distinto aunque sea el mismo archivo con igual nombre y tamaño.
                 if uploaded is not None:
-                    upload_id = f"{uploaded.name}_{uploaded.size}"
+                    upload_id = (
+                        getattr(uploaded, "file_id", None)
+                        or getattr(uploaded, "_file_id", None)
+                        or f"{uploaded.name}_{uploaded.size}"
+                    )
                     if st.session_state.get(f"_sid_{key}") != upload_id:
                         save_file(key, uploaded)
                         st.session_state[f"_sid_{key}"] = upload_id
