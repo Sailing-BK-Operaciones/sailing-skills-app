@@ -7,9 +7,9 @@ def render():
     st.title("Control Aforos BYMA")
     st.markdown(
         "Compara los aforos informados por la API BYMA (col 26 de ESPECIES.XLS) "
-        "con las listas asignadas en Gallo. "
-        "Detecta diferencias de lista/aforo y especies aceptadas por BYMA "
-        "que no tienen lista asignada en Gallo."
+        "con las listas asignadas en Gallo. Detecta diferencias de lista/aforo, "
+        "especies aceptadas por BYMA sin lista en Gallo, y genera un **Reporte Comercial** "
+        "con todas las especies aceptadas agrupadas por categoría y buscador por ticker/CVSA."
     )
     st.divider()
 
@@ -19,11 +19,18 @@ def render():
         - **ESPECIES.XLS** — maestro de especies: código CVSA, Lista asignada (col F)
           y haircut BYMA API (col 26). Aforo BYMA = 100 − haircut.
 
-        **Output — Excel DIFERENCIAS AFOROS.xlsx:**
+        **Output 1 — `DIFERENCIAS AFOROS.xlsx`:**
         - Hoja **Diferencias Aforo**: especies cuya Lista en Gallo no coincide con el aforo BYMA.
           Columna *Aforo Lista Actual* en rojo, *Lista Sugerida* en verde (corrección).
         - Hoja **Sin Lista Gallo**: especies que BYMA acepta pero no tienen lista en Gallo.
         - Hoja **Lista Sin BYMA** *(informacional)*: especies con lista en Gallo que BYMA ya no acepta.
+
+        **Output 2 — `Reporte Comercial Garantias BYMA DD-MM-AAAA.xlsx`:**
+        - Hoja **Resumen**: tabla de totales por categoría (cantidad, aforo mín/máx,
+          disponibilidad ARS / USD MEP / USD Cable) + buscador rápido por ticker o código CVSA.
+        - Una hoja por categoría: Títulos Públicos, Letras del Tesoro, Obligaciones Negociables,
+          Acciones, CEDEARs, FCI, Otros. Incluye ticker ARS / MEP / Cable, vencimiento/emisor,
+          haircut y aforo. Colores según nivel de aforo.
 
         **Tablas Lista → Aforo:**
 
@@ -52,11 +59,12 @@ def render():
         with st.spinner("Procesando maestro de especies..."):
             try:
                 from skills.control_aforos_byma.logic import generar_control
-                xlsx_bytes, resumen, advertencias = generar_control(especies_file)
+                xlsx_dif_bytes, xlsx_rc_bytes, resumen, advertencias = generar_control(especies_file)
 
-                n_dif  = resumen["diferencias"]
-                n_sl   = resumen["sin_lista"]
-                n_lsb  = resumen["lista_sin_byma"]
+                n_dif = resumen["diferencias"]
+                n_sl  = resumen["sin_lista"]
+                n_lsb = resumen["lista_sin_byma"]
+
                 if n_dif == 0 and n_sl == 0:
                     st.success(
                         f"✓ Sin diferencias ni faltantes — maestro alineado con BYMA API.  "
@@ -69,10 +77,10 @@ def render():
                     st.warning(" · ".join(partes))
 
                 col_a, col_b, col_c, col_d = st.columns(4)
-                col_a.metric("En lista BYMA",        resumen["total_byma"])
-                col_b.metric("OK (coinciden)",        resumen["total_ok"])
-                col_c.metric("Diferencias de aforo",  n_dif)
-                col_d.metric("Sin lista en Gallo",    n_sl)
+                col_a.metric("En lista BYMA",       resumen["total_byma"])
+                col_b.metric("OK (coinciden)",       resumen["total_ok"])
+                col_c.metric("Diferencias de aforo", n_dif)
+                col_d.metric("Sin lista en Gallo",   n_sl)
 
                 if n_lsb:
                     st.info(
@@ -80,13 +88,25 @@ def render():
                         "(hoja informacional 'Lista Sin BYMA')."
                     )
 
-                st.download_button(
-                    label="⬇ Descargar DIFERENCIAS AFOROS.xlsx",
-                    data=xlsx_bytes,
-                    file_name="DIFERENCIAS AFOROS.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True,
-                )
+                # ── Descargas ─────────────────────────────────────────────────
+                col_dl1, col_dl2 = st.columns(2)
+                with col_dl1:
+                    st.download_button(
+                        label="⬇ Descargar DIFERENCIAS AFOROS.xlsx",
+                        data=xlsx_dif_bytes,
+                        file_name="DIFERENCIAS AFOROS.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True,
+                    )
+                with col_dl2:
+                    fecha_str = resumen["fecha"]
+                    st.download_button(
+                        label=f"⬇ Descargar Reporte Comercial {fecha_str}.xlsx",
+                        data=xlsx_rc_bytes,
+                        file_name=f"Reporte Comercial Garantias BYMA {fecha_str}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True,
+                    )
 
                 if advertencias:
                     with st.expander(f"⚠ {len(advertencias)} advertencia(s) de procesamiento"):
