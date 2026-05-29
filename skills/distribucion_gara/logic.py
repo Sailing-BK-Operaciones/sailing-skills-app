@@ -48,10 +48,13 @@ def generar_reporte(
     GREY_FONT     = Font(color="AAAAAA")
     BOLD_FONT     = Font(bold=True)
     ALT_FILL      = PatternFill("solid", fgColor="F2F2F2")
-    ENGARA_FILL   = PatternFill("solid", fgColor="BDD7EE")
-    ENVIAR_FILL   = PatternFill("solid", fgColor="FCE4D6")
-    STOCK_FILL    = PatternFill("solid", fgColor="D9D9D9")
+    ENGARA_FILL    = PatternFill("solid", fgColor="BDD7EE")
+    ENVIAR_FILL    = PatternFill("solid", fgColor="FCE4D6")
+    GESTIONAR_FILL = PatternFill("solid", fgColor="FFFF99")
+    STOCK_FILL     = PatternFill("solid", fgColor="D9D9D9")
     DEVOLUCION_FILL = PatternFill("solid", fgColor="E2EFDA")
+    COVERED_FILL    = PatternFill("solid", fgColor="E2EFDA")
+    CVSA_EXCLUIDAS_SPLIT = set()
     VTO_TITLE_FILL  = PatternFill("solid", fgColor="C55A11")
     VTO_HEADER_FILL = PatternFill("solid", fgColor="F4B942")
     VTO_SUB_FILL    = PatternFill("solid", fgColor="FCE4D6")
@@ -349,6 +352,24 @@ def generar_reporte(
             "fecha_vto": fecha_vto,
         })
 
+    # ── Agrupar comitentes con múltiples posiciones (distintas fecha_vto) ─────────
+    # Un comitente puede aparecer N veces en Saldos Gara (una por fecha de vencimiento).
+    # Se procesa en una sola hoja C-XXXX con N splits secuenciales.
+    _ctte_order_g = []
+    _ctte_pos_g   = {}
+    for _c in comitentes:
+        if _c["ctte"] not in _ctte_pos_g:
+            _ctte_order_g.append(_c["ctte"])
+            _ctte_pos_g[_c["ctte"]] = {}
+        _fk = _c["fecha_vto"]
+        if _fk not in _ctte_pos_g[_c["ctte"]]:
+            _ctte_pos_g[_c["ctte"]][_fk] = {"requerido": 0.0, "fecha_vto": _fk}
+        _ctte_pos_g[_c["ctte"]][_fk]["requerido"] += _c["requerido"]
+    comitentes_grouped = [
+        {"ctte": k, "positions": list(_ctte_pos_g[k].values())}
+        for k in _ctte_order_g
+    ]
+
     # ── STEP 9.1: Risk Monitoring Client (opcional) ───────────────────────────────
     _rmc_deficit = {}
     _rmc_rows    = []
@@ -598,9 +619,12 @@ def generar_reporte(
     cpr_found_global = []
     _alerts_gara     = []
 
-    for ctte_info in comitentes:
-        ctte      = ctte_info["ctte"]
-        requerido = ctte_info["requerido"]
+    for ctte_group in comitentes_grouped:
+        ctte      = ctte_group["ctte"]
+        positions = ctte_group["positions"]
+        _is_multi_pos    = (len(positions) > 1)
+        _total_requerido = sum(p["requerido"] for p in positions)
+        requerido        = _total_requerido
 
         tenencia    = sateclte_tenencia.get(ctte, {})
         all_codigos = set(tenencia.keys())
@@ -771,101 +795,141 @@ def generar_reporte(
         if cpr_items:
             cpr_found_global.append({"ctte": ctte, "items": cpr_items})
 
-        # ── Split ─────────────────────────────────────────────────────────────
-        def _mk_split_entry(origen, s, vn_key, monto_key):
-            return {"origen": origen, "codigo": s["codigo"], "ticker": s["ticker"],
-                    "vn": s[vn_key], "precio": s["precio"], "aforo_sail": s["aforo_sail"],
-                    "monto_sail_total": s[monto_key], "tipo_precio": s["tipo_precio"],
-                    "lam_min": s["lam_min"]}
-
-        retirables_list  = [_mk_split_entry("Retirable",  s, "vn_ret",       "monto_sail_ret")
-                            for s in species_table if s["vn_ret"]  > 0 and s["monto_sail_ret"]  > 0]
-        disponibles_list = [_mk_split_entry("Disponible", s, "vn_disp",      "monto_sail_disp")
-                            for s in species_table if s["vn_disp"] > 0 and s["monto_sail_disp"] > 0]
-        cpr_list         = [_mk_split_entry("CPR",        s, "vn_cpr",       "monto_sail_cpr")
-                            for s in species_table if s["vn_cpr"]  > 0 and s["monto_sail_cpr"]  > 0]
-        ci_compra_list   = [_mk_split_entry("Compra CI",  s, "vn_ci_compra", "monto_sail_ci")
-                            for s in species_table if s["vn_ci_compra"] > 0 and s["monto_sail_ci"] > 0]
-
+        # ── Sort key para listas de split ─────────────────────────────────────
         def _sort_key(e):
             return (e["lam_min"] == 1.0, e["monto_sail_total"])
 
-        retirables_list.sort(key=_sort_key, reverse=True)
+        # ── _remaining: rastrea VN disponible a medida que se consumen posiciones ─
+        _remaining = {cod: {"ret":       stock[cod]["ret"],
+                            "disp":      stock[cod]["disp"],
+                            "cpr":       stock[cod]["cpr"],
+                            "ci_compra": stock[cod]["ci_compra"]}
+                      for cod in stock}
+        split_results = []   # list of (_pos_info, split_rows, split_cubierto)
 
-        codigos_retirables = {e["codigo"] for e in retirables_list}
-        codigos_con_util   = {s["codigo"] for s in species_table if s["vn_util"] > 0}
-        disp_prioritarios  = [e for e in disponibles_list if e["codigo"] in codigos_retirables]
-        disp_con_util      = [e for e in disponibles_list if e["codigo"] not in codigos_retirables and e["codigo"] in codigos_con_util]
-        disp_resto         = [e for e in disponibles_list if e["codigo"] not in codigos_retirables and e["codigo"] not in codigos_con_util]
-        for lst in (disp_prioritarios, disp_con_util, disp_resto):
-            lst.sort(key=_sort_key, reverse=True)
-        disponibles_ordered = disp_prioritarios + disp_con_util + disp_resto
+        # ── Loop por posicion (N posiciones para el mismo comitente) ──────────
+        for _pos_idx, _pos_info in enumerate(positions):
+            requerido      = _pos_info["requerido"]
+            _fecha_vto_pos = _pos_info["fecha_vto"]
 
-        codigos_previos  = codigos_retirables | {e["codigo"] for e in disponibles_list}
-        cpr_prioritarios = [e for e in cpr_list if e["codigo"] in codigos_previos]
-        cpr_resto        = [e for e in cpr_list if e["codigo"] not in codigos_previos]
-        cpr_prioritarios.sort(key=_sort_key, reverse=True)
-        cpr_resto.sort(key=_sort_key, reverse=True)
-        cpr_ordered = cpr_prioritarios + cpr_resto
+            # Construir listas de split desde _remaining
+            retirables_list  = []
+            disponibles_list = []
+            cpr_list         = []
+            for s in species_table:
+                cod = s["codigo"]
+                if cod in CVSA_EXCLUIDAS_SPLIT:
+                    continue
+                _vn_ret  = max(0.0, _remaining.get(cod, {}).get("ret",  0.0))
+                _vn_disp = max(0.0, _remaining.get(cod, {}).get("disp", 0.0))
+                _vn_cpr  = max(0.0, _remaining.get(cod, {}).get("cpr",  0.0))
+                _msr = monto_garantizable(_vn_ret,  cod, s["aforo_sail"])
+                _msd = monto_garantizable(_vn_disp, cod, s["aforo_sail"])
+                _msc = monto_garantizable(_vn_cpr,  cod, s["aforo_sail"])
+                if _vn_ret  > 0 and _msr > 0:
+                    retirables_list.append({
+                        "origen": "Retirable", "codigo": cod, "ticker": s["ticker"],
+                        "vn": _vn_ret, "precio": s["precio"], "aforo_sail": s["aforo_sail"],
+                        "monto_sail_total": _msr, "tipo_precio": s["tipo_precio"], "lam_min": s["lam_min"],
+                    })
+                if _vn_disp > 0 and _msd > 0:
+                    disponibles_list.append({
+                        "origen": "Disponible", "codigo": cod, "ticker": s["ticker"],
+                        "vn": _vn_disp, "precio": s["precio"], "aforo_sail": s["aforo_sail"],
+                        "monto_sail_total": _msd, "tipo_precio": s["tipo_precio"], "lam_min": s["lam_min"],
+                    })
+                if _vn_cpr  > 0 and _msc > 0:
+                    cpr_list.append({
+                        "origen": "CPR", "codigo": cod, "ticker": s["ticker"],
+                        "vn": _vn_cpr, "precio": s["precio"], "aforo_sail": s["aforo_sail"],
+                        "monto_sail_total": _msc, "tipo_precio": s["tipo_precio"], "lam_min": s["lam_min"],
+                    })
 
-        ci_compra_list.sort(key=_sort_key, reverse=True)
+            ci_compra_list = []
+            for s in species_table:
+                _vn_ci = max(0.0, _remaining.get(s["codigo"], {}).get("ci_compra", 0.0))
+                _msci  = monto_garantizable(_vn_ci, s["codigo"], s["aforo_sail"])
+                if _vn_ci > 0 and _msci > 0:
+                    ci_compra_list.append({
+                        "origen": "Compra CI", "codigo": s["codigo"], "ticker": s["ticker"],
+                        "vn": _vn_ci, "precio": s["precio"], "aforo_sail": s["aforo_sail"],
+                        "monto_sail_total": _msci, "tipo_precio": s["tipo_precio"], "lam_min": s["lam_min"],
+                    })
 
-        split_rows  = []
-        acumulado   = 0.0
-        covered_row = None
+            retirables_list.sort(key=_sort_key, reverse=True)
+            codigos_retirables = {e["codigo"] for e in retirables_list}
+            codigos_con_util   = {s["codigo"] for s in species_table if s["vn_util"] > 0}
+            disp_prioritarios  = [e for e in disponibles_list if e["codigo"] in codigos_retirables]
+            disp_con_util      = [e for e in disponibles_list if e["codigo"] not in codigos_retirables and e["codigo"] in codigos_con_util]
+            disp_resto         = [e for e in disponibles_list if e["codigo"] not in codigos_retirables and e["codigo"] not in codigos_con_util]
+            for lst in (disp_prioritarios, disp_con_util, disp_resto):
+                lst.sort(key=_sort_key, reverse=True)
+            disponibles_ordered = disp_prioritarios + disp_con_util + disp_resto
 
-        # Phase 1: Retirables → Disponibles
-        for stage_list in [retirables_list, disponibles_ordered]:
-            if covered_row is not None:
-                for entry in stage_list:
-                    _agregar_remanente(split_rows, entry, acumulado)
-                continue
-            faltante  = requerido - acumulado
-            best, bvn = _mejor_unico_cobertor(stage_list, faltante)
-            n_greedy  = _simular_activos_greedy(stage_list, acumulado, requerido) if best else 0
-            if best is not None and n_greedy > 1:
-                monto_u    = _monto_vn(best, bvn)
-                acumulado += monto_u
-                split_rows.append({**best, "vn_usado": bvn, "monto_usado": monto_u,
-                                   "acumulado": acumulado, "alcanza": True,
-                                   "is_remanente": False, "is_skipped": False})
-                covered_row = len(split_rows) - 1
-                vn_rem = best["vn"] - bvn
-                if vn_rem > 0:
-                    split_rows.append({**best, "origen": best["origen"] + " (remanente)",
-                                       "vn_usado": vn_rem, "monto_usado": _monto_vn(best, vn_rem),
-                                       "acumulado": acumulado, "alcanza": False,
-                                       "is_remanente": True, "is_skipped": False})
-                for entry in stage_list:
-                    if entry["codigo"] != best["codigo"]:
+            codigos_previos  = codigos_retirables | {e["codigo"] for e in disponibles_list}
+            cpr_prioritarios = [e for e in cpr_list if e["codigo"] in codigos_previos]
+            cpr_resto        = [e for e in cpr_list if e["codigo"] not in codigos_previos]
+            cpr_prioritarios.sort(key=_sort_key, reverse=True)
+            cpr_resto.sort(key=_sort_key, reverse=True)
+            cpr_ordered = cpr_prioritarios + cpr_resto
+            ci_compra_list.sort(key=_sort_key, reverse=True)
+
+            split_rows  = []
+            acumulado   = 0.0
+            covered_row = None
+
+            # Phase 1: Retirables → Disponibles
+            for stage_list in [retirables_list, disponibles_ordered]:
+                if covered_row is not None:
+                    for entry in stage_list:
                         _agregar_remanente(split_rows, entry, acumulado)
-            else:
-                acumulado, covered_row = _greedy_stage(split_rows, stage_list, requerido, acumulado, covered_row)
+                    continue
+                faltante  = requerido - acumulado
+                best, bvn = _mejor_unico_cobertor(stage_list, faltante)
+                n_greedy  = _simular_activos_greedy(stage_list, acumulado, requerido) if best else 0
+                if best is not None and n_greedy > 1:
+                    monto_u    = _monto_vn(best, bvn)
+                    acumulado += monto_u
+                    split_rows.append({**best, "vn_usado": bvn, "monto_usado": monto_u,
+                                       "acumulado": acumulado, "alcanza": True,
+                                       "is_remanente": False, "is_skipped": False})
+                    covered_row = len(split_rows) - 1
+                    vn_rem = best["vn"] - bvn
+                    if vn_rem > 0:
+                        split_rows.append({**best, "origen": best["origen"] + " (remanente)",
+                                           "vn_usado": vn_rem, "monto_usado": _monto_vn(best, vn_rem),
+                                           "acumulado": acumulado, "alcanza": False,
+                                           "is_remanente": True, "is_skipped": False})
+                    for entry in stage_list:
+                        if entry["codigo"] != best["codigo"]:
+                            _agregar_remanente(split_rows, entry, acumulado)
+                else:
+                    acumulado, covered_row = _greedy_stage(split_rows, stage_list, requerido, acumulado, covered_row)
 
-        # Append devolucion forzada rows
-        def _append_devolucion(split_rows, cod_v, forced_qty, origen_label):
-            esp_v  = especies.get(cod_v, {})
-            prec_v = precios.get(cod_v, 0.0)
-            afs_v  = esp_v.get("aforo_sail", 0.0)
-            tipo_v = esp_v.get("tipo_precio", "Normal")
-            monto_v = forced_qty * (prec_v / 100.0 if tipo_v.lower().startswith("porc") else prec_v) * afs_v
-            split_rows.append({
-                "origen": origen_label, "codigo": cod_v,
-                "ticker": esp_v.get("ticker", cod_v), "vn": forced_qty,
-                "precio": prec_v, "aforo_sail": afs_v,
-                "monto_sail_total": monto_v, "tipo_precio": tipo_v,
-                "lam_min": esp_v.get("lam_min", 0.0),
-                "vn_usado": forced_qty, "monto_usado": monto_v,
-                "acumulado": acumulado, "alcanza": False,
-                "is_remanente": True, "is_skipped": False,
-            })
+            # Append devolucion forzada rows
+            def _append_devolucion(split_rows, cod_v, forced_qty, origen_label):
+                esp_v  = especies.get(cod_v, {})
+                prec_v = precios.get(cod_v, 0.0)
+                afs_v  = esp_v.get("aforo_sail", 0.0)
+                tipo_v = esp_v.get("tipo_precio", "Normal")
+                monto_v = forced_qty * (prec_v / 100.0 if tipo_v.lower().startswith("porc") else prec_v) * afs_v
+                split_rows.append({
+                    "origen": origen_label, "codigo": cod_v,
+                    "ticker": esp_v.get("ticker", cod_v), "vn": forced_qty,
+                    "precio": prec_v, "aforo_sail": afs_v,
+                    "monto_sail_total": monto_v, "tipo_precio": tipo_v,
+                    "lam_min": esp_v.get("lam_min", 0.0),
+                    "vn_usado": forced_qty, "monto_usado": monto_v,
+                    "acumulado": acumulado, "alcanza": False,
+                    "is_remanente": True, "is_skipped": False,
+                })
 
-        for cod_v, qty in ventas_sat_en_retirables.items():
-            _append_devolucion(split_rows, cod_v, qty, "Retirable (venta T)")
-        for cod_v, qty in ventas_ci_en_retirables.items():
-            _append_devolucion(split_rows, cod_v, qty, "Retirable (venta CI)")
+            for cod_v, qty in ventas_sat_en_retirables.items():
+                _append_devolucion(split_rows, cod_v, qty, "Retirable (venta T)")
+            for cod_v, qty in ventas_ci_en_retirables.items():
+                _append_devolucion(split_rows, cod_v, qty, "Retirable (venta CI)")
 
-        # Phase 2: Boost BYMA
+            # Phase 2: Boost BYMA
         if covered_row is None and acumulado < requerido:
             faltante_boost = requerido - acumulado
             boost_cands    = []
@@ -989,30 +1053,59 @@ def generar_reporte(
                                        "acumulado": acumulado, "alcanza": False,
                                        "is_remanente": False, "is_skipped": False})
 
-        split_cubierto = covered_row is not None
+            split_cubierto = covered_row is not None
 
-        # Collect Gallo rows
-        for srow in split_rows:
-            if srow.get("is_skipped") or srow["is_remanente"]:
-                continue
-            origen_base = srow["origen"].replace(" (remanente)", "").replace(" (venta T)", "")
-            if origen_base == "Retirable":
-                accion_g = "EN GARA"
-            elif origen_base in ("Disponible", "CPR", "CPR A LIQUIDAR"):
-                accion_g = "ENVIAR"
-            elif origen_base.startswith("Boost BYMA") and srow.get("_boost_new_vn"):
-                accion_g = "ENVIAR"
-            else:
-                continue
-            gallo_rows.append({
-                "ctte": ctte, "ticker": srow["ticker"], "codigo": srow["codigo"],
-                "vn": int(srow["vn_usado"]), "fecha_vto": ctte_info.get("fecha_vto"),
-            })
+            # Descontar VN usado del stock remanente para la siguiente posición
+            for _srow in split_rows:
+                if _srow.get("is_skipped") or _srow["is_remanente"]:
+                    continue
+                _cod = _srow["codigo"]
+                _ob  = (_srow["origen"]
+                        .replace(" (remanente)", "")
+                        .replace(" (venta T)", "")
+                        .replace(" (venta CI)", ""))
+                if _ob == "Retirable":
+                    _remaining[_cod]["ret"]  = max(0.0, _remaining[_cod]["ret"]  - _srow["vn_usado"])
+                elif _ob in ("Disponible", "CPR"):
+                    _remaining[_cod]["disp"] = max(0.0, _remaining[_cod]["disp"] - _srow["vn_usado"])
+                elif _ob == "CPR A LIQUIDAR":
+                    _remaining[_cod]["cpr"]  = max(0.0, _remaining[_cod]["cpr"]  - _srow["vn_usado"])
+                elif _ob == "Compra CI":
+                    _remaining[_cod]["ci_compra"] = max(0.0, _remaining[_cod]["ci_compra"] - _srow["vn_usado"])
+                # Boost BYMA: no descuenta VN adicional
+
+            # Collect Gallo rows con fecha_vto de esta posición
+            for srow in split_rows:
+                if srow.get("is_skipped") or srow["is_remanente"]:
+                    continue
+                origen_base = srow["origen"].replace(" (remanente)", "").replace(" (venta T)", "")
+                if origen_base == "Retirable":
+                    accion_g = "EN GARA"
+                elif origen_base in ("Disponible", "CPR", "CPR A LIQUIDAR"):
+                    accion_g = "ENVIAR"
+                elif origen_base.startswith("Boost BYMA") and srow.get("_boost_new_vn"):
+                    accion_g = "ENVIAR"
+                else:
+                    continue
+                gallo_rows.append({
+                    "ctte": ctte, "ticker": srow["ticker"], "codigo": srow["codigo"],
+                    "vn": int(srow["vn_usado"]), "fecha_vto": _fecha_vto_pos,
+                })
+
+            split_results.append((_pos_info, split_rows, split_cubierto))
+        # ── fin loop posiciones ───────────────────────────────────────────────
+
+        # Restaurar requerido total para panel / resumen
+        requerido = _total_requerido
 
         # ── Build per-comitente sheet ───────────────────────────────────────
         ws = wb_out.create_sheet(title=f"C-{ctte}")
 
-        fecha_vto_str = ctte_info["fecha_vto"].strftime("%d/%m/%Y") if ctte_info.get("fecha_vto") else "-"
+        if _is_multi_pos:
+            _fvtos = [p["fecha_vto"].strftime("%d/%m/%Y") if p["fecha_vto"] else "-" for p in positions]
+            fecha_vto_str = "  /  ".join(_fvtos)
+        else:
+            fecha_vto_str = positions[0]["fecha_vto"].strftime("%d/%m/%Y") if positions[0].get("fecha_vto") else "-"
         panel = [
             ("Monto Requerido",           requerido),
             ("Garantizable c/Aforo SAIL", total_garantizable_sail),
@@ -1182,103 +1275,125 @@ def generar_reporte(
 
         current_row += 2
 
-        # Split table
-        if not split_cubierto:
-            ws.cell(row=current_row, column=1,
-                value="COBERTURA: DEFICIT TOTAL -- Retirables + Disponibles + Boost BYMA + CPR no alcanzan el requerimiento"
-            ).font = Font(bold=True, color="9C0006")
-        else:
-            ws.cell(row=current_row, column=1,
-                value="TABLA DE SPLIT -- COBERTURA DEL REQUERIMIENTO").font = BOLD_FONT
-            current_row += 1
-            for ci, h in enumerate(["Origen", "Ticker", "Codigo CVSA", "VN",
-                                     "Precio Cierre", "Aforo Aplic.",
-                                     "Monto Garantizable", "Acumulado", "Alcanza?", "Accion"], 1):
-                apply_header(ws, current_row, ci, h)
-            alt = False
-            for srow in split_rows:
-                if srow.get("is_skipped"):
-                    continue
-                current_row += 1
-                is_rem   = srow["is_remanente"]
-                alcanza  = srow["alcanza"]
-                origen_raw  = srow["origen"]
-                origen_base = origen_raw.replace(" (remanente)", "").replace(" (venta T)", "").replace(" (venta CI)", "")
-                es_ret   = origen_base == "Retirable"
-                es_disp  = origen_base == "Disponible"
-                es_cpr   = origen_base == "CPR"
-                es_ci    = origen_base == "Compra CI"
-                es_boost = origen_base.startswith("Boost BYMA")
-                es_cpl   = origen_base == "CPR A LIQUIDAR"
-                if is_rem:
-                    accion      = "DEVOLUCION" if es_ret else "STOCK"
-                    accion_fill = DEVOLUCION_FILL if es_ret else (CI_COMPRA_FILL if es_ci else STOCK_FILL)
-                else:
-                    if es_ret:
-                        accion = "EN GARA";        accion_fill = ENGARA_FILL
-                    elif es_disp or es_cpr:
-                        accion = "ENVIAR";         accion_fill = ENVIAR_FILL
-                    elif es_boost:
-                        accion = "AFORO BYMA";     accion_fill = PatternFill("solid", fgColor="D9C3E8")
-                    elif es_cpl:
-                        accion = "CPR A LIQUIDAR"; accion_fill = PatternFill("solid", fgColor="FFEB9C")
-                    else:
-                        accion = "ENVIAR CI";      accion_fill = CI_COMPRA_FILL
+        # Split tables — una por posición
+        SPLIT_POS_HDR_FILL = PatternFill("solid", fgColor="2E4057")
+        split_headers = ["Origen", "Ticker", "Codigo CVSA", "VN",
+                         "Precio Cierre", "Aforo Aplic.",
+                         "Monto Garantizable", "Acumulado", "Alcanza?", "Accion"]
 
-                if not is_rem:
-                    if accion == "ENVIAR" and es_disp:
-                        row_fill = PatternFill("solid", fgColor="C6EFCE")
-                    elif accion in ("ENVIAR", "CPR A LIQUIDAR") and (es_cpr or es_cpl):
-                        row_fill = PatternFill("solid", fgColor="FFEB9C")
-                    elif accion == "AFORO BYMA":
-                        row_fill = PatternFill("solid", fgColor="D9C3E8")
-                    elif accion == "ENVIAR CI":
-                        row_fill = CI_COMPRA_FILL
+        for _sri, (_spos_info, split_rows, split_cubierto) in enumerate(split_results):
+            # Encabezado de sección solo si hay múltiples posiciones
+            if _is_multi_pos:
+                _sfvto = _spos_info["fecha_vto"].strftime("%d/%m/%Y") if _spos_info.get("fecha_vto") else "-"
+                _shdr  = (f"POSICION {_sri+1}/{len(split_results)}  —  "
+                          f"Fecha Vto: {_sfvto}  —  "
+                          f"Monto Requerido: {int(_spos_info['requerido']):,}")
+                ws.merge_cells(start_row=current_row, start_column=1,
+                               end_row=current_row, end_column=10)
+                _shc = ws.cell(row=current_row, column=1, value=_shdr)
+                _shc.fill      = SPLIT_POS_HDR_FILL
+                _shc.font      = Font(bold=True, color="FFFFFF", size=10)
+                _shc.alignment = Alignment(horizontal="left", vertical="center")
+                _shc.border    = thin_border()
+                ws.row_dimensions[current_row].height = 16
+                current_row += 1
+
+            if not split_cubierto:
+                ws.cell(row=current_row, column=1,
+                    value="COBERTURA: DEFICIT TOTAL -- Retirables + Disponibles + Boost BYMA + CPR no alcanzan el requerimiento"
+                ).font = Font(bold=True, color="9C0006")
+            else:
+                ws.cell(row=current_row, column=1,
+                    value="TABLA DE SPLIT -- COBERTURA DEL REQUERIMIENTO").font = BOLD_FONT
+                current_row += 1
+                for ci, h in enumerate(split_headers, 1):
+                    apply_header(ws, current_row, ci, h)
+                alt = False
+                for srow in split_rows:
+                    if srow.get("is_skipped"):
+                        continue
+                    current_row += 1
+                    is_rem   = srow["is_remanente"]
+                    alcanza  = srow["alcanza"]
+                    origen_raw  = srow["origen"]
+                    origen_base = origen_raw.replace(" (remanente)", "").replace(" (venta T)", "").replace(" (venta CI)", "")
+                    es_ret   = origen_base == "Retirable"
+                    es_disp  = origen_base == "Disponible"
+                    es_cpr   = origen_base == "CPR"
+                    es_ci    = origen_base == "Compra CI"
+                    es_boost = origen_base.startswith("Boost BYMA")
+                    es_cpl   = origen_base == "CPR A LIQUIDAR"
+                    if is_rem:
+                        accion      = "DEVOLUCION" if es_ret else "STOCK"
+                        accion_fill = DEVOLUCION_FILL if es_ret else (CI_COMPRA_FILL if es_ci else STOCK_FILL)
+                    else:
+                        if es_ret:
+                            accion = "EN GARA";        accion_fill = ENGARA_FILL
+                        elif es_disp or es_cpr:
+                            accion = "ENVIAR";         accion_fill = ENVIAR_FILL
+                        elif es_boost:
+                            accion = "AFORO BYMA";     accion_fill = PatternFill("solid", fgColor="D9C3E8")
+                        elif es_cpl:
+                            accion = "CPR A LIQUIDAR"; accion_fill = PatternFill("solid", fgColor="FFEB9C")
+                        else:
+                            accion = "ENVIAR CI";      accion_fill = CI_COMPRA_FILL
+
+                    if not is_rem:
+                        if accion == "ENVIAR" and es_disp:
+                            row_fill = PatternFill("solid", fgColor="C6EFCE")
+                        elif accion in ("ENVIAR", "CPR A LIQUIDAR") and (es_cpr or es_cpl):
+                            row_fill = PatternFill("solid", fgColor="FFEB9C")
+                        elif accion == "AFORO BYMA":
+                            row_fill = PatternFill("solid", fgColor="D9C3E8")
+                        elif accion == "ENVIAR CI":
+                            row_fill = CI_COMPRA_FILL
+                        else:
+                            row_fill = None
                     else:
                         row_fill = None
-                else:
-                    row_fill = None
 
-                vals = [
-                    origen_raw, srow["ticker"], srow["codigo"],
-                    int(srow["vn_usado"]),
-                    srow["precio"] if srow["precio"] else "",
-                    int(srow["aforo_sail"] * 100) if srow["aforo_sail"] else "",
-                    int(round(srow["monto_usado"])) if srow["monto_usado"] else "",
-                    int(round(srow["acumulado"])) if srow["acumulado"] else "",
-                    "CUBIERTO" if alcanza else "",
-                    accion,
-                ]
-                for ci, v in enumerate(vals, 1):
-                    cell = ws.cell(row=current_row, column=ci, value=v)
-                    cell.border = thin_border()
-                    if is_rem:
-                        cell.font = GREY_FONT; cell.fill = ALT_FILL
-                    else:
-                        if ci != 9:
-                            if row_fill is not None:
-                                cell.fill = row_fill
-                            elif alt:
-                                cell.fill = ALT_FILL
-                    if ci == 4 and v != "":
-                        cell.number_format = FMT_INT; cell.alignment = Alignment(horizontal="right")
-                    elif ci == 5 and v != "":
-                        cell.number_format = FMT_PRICE; cell.alignment = Alignment(horizontal="right")
-                    elif ci == 6 and v != "":
-                        cell.number_format = '0"%"'
-                    elif ci in (7, 8) and v != "":
-                        cell.number_format = FMT_INT; cell.alignment = Alignment(horizontal="right")
-                    if alcanza and ci == 9:
-                        cell.font = Font(bold=True, color="276221")
-                if not is_rem:
-                    alt = not alt
-                cell_acc = ws.cell(row=current_row, column=10)
-                cell_acc.value = accion; cell_acc.fill = accion_fill
-                cell_acc.border = thin_border()
-                cell_acc.alignment = Alignment(horizontal="center", vertical="center")
-                cell_acc.font = GREY_FONT if is_rem else Font(bold=True)
-                if alcanza:
-                    ws.cell(row=current_row, column=9).font = Font(bold=True, color="276221")
+                    vals = [
+                        origen_raw, srow["ticker"], srow["codigo"],
+                        int(srow["vn_usado"]),
+                        srow["precio"] if srow["precio"] else "",
+                        int(srow["aforo_sail"] * 100) if srow["aforo_sail"] else "",
+                        int(round(srow["monto_usado"])) if srow["monto_usado"] else "",
+                        int(round(srow["acumulado"])) if srow["acumulado"] else "",
+                        "CUBIERTO" if alcanza else "",
+                        accion,
+                    ]
+                    for ci, v in enumerate(vals, 1):
+                        cell = ws.cell(row=current_row, column=ci, value=v)
+                        cell.border = thin_border()
+                        if is_rem:
+                            cell.font = GREY_FONT; cell.fill = ALT_FILL
+                        else:
+                            if ci != 9:
+                                if row_fill is not None:
+                                    cell.fill = row_fill
+                                elif alt:
+                                    cell.fill = ALT_FILL
+                        if ci == 4 and v != "":
+                            cell.number_format = FMT_INT; cell.alignment = Alignment(horizontal="right")
+                        elif ci == 5 and v != "":
+                            cell.number_format = FMT_PRICE; cell.alignment = Alignment(horizontal="right")
+                        elif ci == 6 and v != "":
+                            cell.number_format = '0"%"'
+                        elif ci in (7, 8) and v != "":
+                            cell.number_format = FMT_INT; cell.alignment = Alignment(horizontal="right")
+                        if alcanza and ci == 9:
+                            cell.font = Font(bold=True, color="276221")
+                    if not is_rem:
+                        alt = not alt
+                    cell_acc = ws.cell(row=current_row, column=10)
+                    cell_acc.value = accion; cell_acc.fill = accion_fill
+                    cell_acc.border = thin_border()
+                    cell_acc.alignment = Alignment(horizontal="center", vertical="center")
+                    cell_acc.font = GREY_FONT if is_rem else Font(bold=True)
+                    if alcanza:
+                        ws.cell(row=current_row, column=9).font = Font(bold=True, color="276221")
+
+            current_row += 1  # blank entre splits
 
         for col in ws.columns:
             max_len = 0
@@ -1375,7 +1490,7 @@ def generar_reporte(
     apply_header(ws_res, 1, 11, "Validacion BC vs Gallo")
 
     _rmc_by_ctte = {}
-    for _c in comitentes:
+    for _c in comitentes_grouped:
         _acct = _ACCOUNT_ID_BY_CTTE.get(_c["ctte"])
         if _acct and _acct in _rmc_deficit:
             _rmc_by_ctte[_c["ctte"]] = _rmc_deficit[_acct]
@@ -1540,7 +1655,7 @@ def generar_reporte(
 
     resumen = {
         "fecha":              FECHA_PROCESO.strftime("%d/%m/%Y"),
-        "n_comitentes":       len(comitentes),
+        "n_comitentes":       len(comitentes_grouped),
         "summary_data":       summary_data,
         "validacion_issues":  _validacion_issues,
         "cpr_found":          cpr_found_global,

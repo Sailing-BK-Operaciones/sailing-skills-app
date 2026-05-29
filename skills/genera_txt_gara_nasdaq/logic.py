@@ -52,12 +52,13 @@ def _strip_zeros(cvsa):
 
 def _parse_c_sheet(ws, cvsa_qty_type):
     all_rows = list(ws.iter_rows(values_only=True))
-    especies_start = split_start = None
+    especies_start = None
+    split_starts   = []   # puede haber N splits en la misma hoja (multi-posicion)
     for i, row in enumerate(all_rows):
         if row[0] == 'TABLA DE ESPECIES':
             especies_start = i
         elif row[0] == 'TABLA DE SPLIT -- COBERTURA DEL REQUERIMIENTO':
-            split_start = i
+            split_starts.append(i)
 
     ticker_to_cvsa = {}
     if especies_start is not None:
@@ -70,10 +71,10 @@ def _parse_c_sheet(ws, cvsa_qty_type):
 
     DELIVER = {'ENVIAR', 'ENVIAR CI'}
     RECEIVE = {'DISPONIBLE', 'DISPONIBLES', 'BAJAR DE GARA', 'DEVOLUCION'}
-    SKIP    = {'STOCK', 'EN GARA'}
+    SKIP    = {'STOCK', 'EN GARA', 'AFORO BYMA', ''}
 
     enviar, disponible, unknowns = [], [], []
-    if split_start is not None:
+    for split_start in split_starts:
         for row in all_rows[split_start + 2:]:
             if row[0] is None and row[1] is None:
                 break
