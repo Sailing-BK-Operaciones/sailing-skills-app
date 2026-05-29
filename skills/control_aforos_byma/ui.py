@@ -8,7 +8,7 @@ def render():
     st.markdown(
         "Compara los aforos informados por la API BYMA (col 26 de ESPECIES.XLS) "
         "con las listas asignadas en Gallo. Detecta diferencias de lista/aforo, "
-        "especies aceptadas por BYMA sin lista en Gallo, y genera un **Reporte Comercial** "
+        "especies aceptadas por BYMA sin lista en Gallo, y genera un **Reporte Garantías BYMA** "
         "con todas las especies aceptadas agrupadas por categoría y buscador por ticker/CVSA."
     )
     st.divider()
@@ -25,7 +25,7 @@ def render():
         - Hoja **Sin Lista Gallo**: especies que BYMA acepta pero no tienen lista en Gallo.
         - Hoja **Lista Sin BYMA** *(informacional)*: especies con lista en Gallo que BYMA ya no acepta.
 
-        **Output 2 — `Reporte Comercial Garantias BYMA DD-MM-AAAA.xlsx`:**
+        **Output 2 — `Reporte Garantias BYMA DD-MM-AA.xlsx`:**
         - Hoja **Resumen**: tabla de totales por categoría (cantidad, aforo mín/máx,
           disponibilidad ARS / USD MEP / USD Cable) + buscador rápido por ticker o código CVSA.
         - Una hoja por categoría: Títulos Públicos, Letras del Tesoro, Obligaciones Negociables,
@@ -99,11 +99,12 @@ def render():
                         use_container_width=True,
                     )
                 with col_dl2:
-                    fecha_str = resumen["fecha"]
+                    from datetime import date as _date
+                    fecha_rc = _date.today().strftime("%d-%m-%y")
                     st.download_button(
-                        label=f"⬇ Descargar Reporte Comercial {fecha_str}.xlsx",
+                        label=f"⬇ Descargar Reporte Garantias BYMA {fecha_rc}.xlsx",
                         data=xlsx_rc_bytes,
-                        file_name=f"Reporte Comercial Garantias BYMA {fecha_str}.xlsx",
+                        file_name=f"Reporte Garantias BYMA {fecha_rc}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         use_container_width=True,
                     )
