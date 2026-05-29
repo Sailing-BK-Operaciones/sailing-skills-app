@@ -978,81 +978,82 @@ def generar_reporte(
                 if faltante_boost <= 0:
                     covered_row = len(split_rows) - 1
 
-        # Phase 3: CI Compra
-        if covered_row is None and acumulado < requerido:
-            faltante  = requerido - acumulado
-            best, bvn = _mejor_unico_cobertor(ci_compra_list, faltante)
-            n_greedy  = _simular_activos_greedy(ci_compra_list, acumulado, requerido) if best else 0
-            if best is not None and n_greedy > 1:
-                monto_u    = _monto_vn(best, bvn)
-                acumulado += monto_u
-                split_rows.append({**best, "vn_usado": bvn, "monto_usado": monto_u,
-                                   "acumulado": acumulado, "alcanza": True,
-                                   "is_remanente": False, "is_skipped": False})
-                covered_row = len(split_rows) - 1
-                vn_rem = best["vn"] - bvn
-                if vn_rem > 0:
-                    split_rows.append({**best, "origen": best["origen"] + " (remanente)",
-                                       "vn_usado": vn_rem, "monto_usado": _monto_vn(best, vn_rem),
-                                       "acumulado": acumulado, "alcanza": False,
-                                       "is_remanente": True, "is_skipped": False})
-                for entry in ci_compra_list:
-                    if entry["codigo"] != best["codigo"]:
-                        _agregar_remanente(split_rows, entry, acumulado)
-            else:
-                acumulado, covered_row = _greedy_stage(split_rows, ci_compra_list, requerido, acumulado, covered_row)
-
-        # Phase 4: CPR A LIQUIDAR
-        if covered_row is None and acumulado < requerido:
-            for entry in cpr_ordered:
-                precio   = entry["precio"]
-                aforo    = entry["aforo_sail"]
-                tipo     = entry["tipo_precio"]
-                vn_total = entry["vn"]
-                if aforo == 0 or precio == 0:
-                    split_rows.append({**entry, "origen": "CPR A LIQUIDAR",
-                                       "vn_usado": vn_total, "monto_usado": 0,
-                                       "acumulado": acumulado, "alcanza": False,
-                                       "is_remanente": True, "is_skipped": True})
-                    continue
-                if covered_row is not None:
-                    split_rows.append({**entry, "origen": "CPR A LIQUIDAR (remanente)",
-                                       "vn_usado": vn_total, "monto_usado": entry["monto_sail_total"],
-                                       "acumulado": acumulado, "alcanza": False,
-                                       "is_remanente": True, "is_skipped": False})
-                    continue
-                faltante = requerido - acumulado
-                vn_needed = (faltante / ((precio / 100.0) * aforo)
-                             if tipo.lower().startswith("porc") and precio > 0 and aforo > 0
-                             else faltante / (precio * aforo) if precio > 0 and aforo > 0
-                             else vn_total)
-                vn_ceil = math.ceil(vn_needed)
-                lam = int(entry["lam_min"]) if entry.get("lam_min", 0) > 1 else 1
-                if lam > 1:
-                    vn_ceil = math.ceil(vn_ceil / lam) * lam
-                if vn_ceil <= vn_total:
-                    monto_u    = vn_ceil * (precio / 100.0 if tipo.lower().startswith("porc") else precio) * aforo
+            # Phase 3: CI Compra
+            if covered_row is None and acumulado < requerido:
+                faltante  = requerido - acumulado
+                best, bvn = _mejor_unico_cobertor(ci_compra_list, faltante)
+                n_greedy  = _simular_activos_greedy(ci_compra_list, acumulado, requerido) if best else 0
+                if best is not None and n_greedy > 1:
+                    monto_u    = _monto_vn(best, bvn)
                     acumulado += monto_u
-                    split_rows.append({**entry, "origen": "CPR A LIQUIDAR",
-                                       "vn_usado": vn_ceil, "monto_usado": monto_u,
+                    split_rows.append({**best, "vn_usado": bvn, "monto_usado": monto_u,
                                        "acumulado": acumulado, "alcanza": True,
                                        "is_remanente": False, "is_skipped": False})
                     covered_row = len(split_rows) - 1
-                    vn_rem = vn_total - vn_ceil
+                    vn_rem = best["vn"] - bvn
                     if vn_rem > 0:
-                        monto_rem = vn_rem * (precio / 100.0 if tipo.lower().startswith("porc") else precio) * aforo
-                        split_rows.append({**entry, "origen": "CPR A LIQUIDAR (remanente)",
-                                           "vn_usado": vn_rem, "monto_usado": monto_rem,
+                        split_rows.append({**best, "origen": best["origen"] + " (remanente)",
+                                           "vn_usado": vn_rem, "monto_usado": _monto_vn(best, vn_rem),
                                            "acumulado": acumulado, "alcanza": False,
                                            "is_remanente": True, "is_skipped": False})
+                    for entry in ci_compra_list:
+                        if entry["codigo"] != best["codigo"]:
+                            _agregar_remanente(split_rows, entry, acumulado)
                 else:
-                    monto_u    = vn_total * (precio / 100.0 if tipo.lower().startswith("porc") else precio) * aforo
-                    acumulado += monto_u
-                    split_rows.append({**entry, "origen": "CPR A LIQUIDAR",
-                                       "vn_usado": vn_total, "monto_usado": monto_u,
-                                       "acumulado": acumulado, "alcanza": False,
-                                       "is_remanente": False, "is_skipped": False})
+                    acumulado, covered_row = _greedy_stage(split_rows, ci_compra_list, requerido, acumulado, covered_row)
 
+            # Phase 4: CPR A LIQUIDAR
+            if covered_row is None and acumulado < requerido:
+                for entry in cpr_ordered:
+                    precio   = entry["precio"]
+                    aforo    = entry["aforo_sail"]
+                    tipo     = entry["tipo_precio"]
+                    vn_total = entry["vn"]
+                    if aforo == 0 or precio == 0:
+                        split_rows.append({**entry, "origen": "CPR A LIQUIDAR",
+                                           "vn_usado": vn_total, "monto_usado": 0,
+                                           "acumulado": acumulado, "alcanza": False,
+                                           "is_remanente": True, "is_skipped": True})
+                        continue
+                    if covered_row is not None:
+                        split_rows.append({**entry, "origen": "CPR A LIQUIDAR (remanente)",
+                                           "vn_usado": vn_total, "monto_usado": entry["monto_sail_total"],
+                                           "acumulado": acumulado, "alcanza": False,
+                                           "is_remanente": True, "is_skipped": False})
+                        continue
+                    faltante = requerido - acumulado
+                    vn_needed = (faltante / ((precio / 100.0) * aforo)
+                                 if tipo.lower().startswith("porc") and precio > 0 and aforo > 0
+                                 else faltante / (precio * aforo) if precio > 0 and aforo > 0
+                                 else vn_total)
+                    vn_ceil = math.ceil(vn_needed)
+                    lam = int(entry["lam_min"]) if entry.get("lam_min", 0) > 1 else 1
+                    if lam > 1:
+                        vn_ceil = math.ceil(vn_ceil / lam) * lam
+                    if vn_ceil <= vn_total:
+                        monto_u    = vn_ceil * (precio / 100.0 if tipo.lower().startswith("porc") else precio) * aforo
+                        acumulado += monto_u
+                        split_rows.append({**entry, "origen": "CPR A LIQUIDAR",
+                                           "vn_usado": vn_ceil, "monto_usado": monto_u,
+                                           "acumulado": acumulado, "alcanza": True,
+                                           "is_remanente": False, "is_skipped": False})
+                        covered_row = len(split_rows) - 1
+                        vn_rem = vn_total - vn_ceil
+                        if vn_rem > 0:
+                            monto_rem = vn_rem * (precio / 100.0 if tipo.lower().startswith("porc") else precio) * aforo
+                            split_rows.append({**entry, "origen": "CPR A LIQUIDAR (remanente)",
+                                               "vn_usado": vn_rem, "monto_usado": monto_rem,
+                                               "acumulado": acumulado, "alcanza": False,
+                                               "is_remanente": True, "is_skipped": False})
+                    else:
+                        monto_u    = vn_total * (precio / 100.0 if tipo.lower().startswith("porc") else precio) * aforo
+                        acumulado += monto_u
+                        split_rows.append({**entry, "origen": "CPR A LIQUIDAR",
+                                           "vn_usado": vn_total, "monto_usado": monto_u,
+                                           "acumulado": acumulado, "alcanza": False,
+                                           "is_remanente": False, "is_skipped": False})
+
+            # ── fin Phase 4 ──────────────────────────────────────────────────
             split_cubierto = covered_row is not None
 
             # Descontar VN usado del stock remanente para la siguiente posición
