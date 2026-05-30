@@ -788,7 +788,7 @@ def agregar_mes(existing_bytes, mes_name, df_mes, tc_mep, tc_ccl):
         return None
 
     # ── 1. Panel de Control ───────────────────────────────────────────────────
-    ws_p = wb.get('Panel de Control')
+    ws_p = wb['Panel de Control'] if 'Panel de Control' in wb.sheetnames else None
     if ws_p is not None:
         stats_c, neto_c = _calc_panel_row(df_mes, 'Cliente')
         stats_m, neto_m = _calc_panel_row(df_mes, 'Mercado')
@@ -851,7 +851,7 @@ def agregar_mes(existing_bytes, mes_name, df_mes, tc_mep, tc_ccl):
                             search_from=new_tot_c + 1)
 
     # ── 2. Análisis de Mercados ───────────────────────────────────────────────
-    ws_merc = wb.get('Análisis de Mercados')
+    ws_merc = wb['Análisis de Mercados'] if 'Análisis de Mercados' in wb.sheetnames else None
     if ws_merc is not None:
         r    = ws_merc.max_row + 2
         df_m = df_mes[df_mes['EsMercado']]
@@ -897,7 +897,7 @@ def agregar_mes(existing_bytes, mes_name, df_mes, tc_mep, tc_ccl):
             max_rows = max(max_rows, len(grouped))
 
     # ── 3. Análisis de Clientes ───────────────────────────────────────────────
-    ws_cli = wb.get('Análisis de Clientes')
+    ws_cli = wb['Análisis de Clientes'] if 'Análisis de Clientes' in wb.sheetnames else None
     if ws_cli is not None:
         r      = ws_cli.max_row + 2
         df_cli = df_mes[(df_mes['EsMercado'] == False) & (df_mes['Canal'] != 'Anulacion')]
@@ -971,7 +971,7 @@ def agregar_mes(existing_bytes, mes_name, df_mes, tc_mep, tc_ccl):
                 c.number_format = fmt
 
     # ── 4. Ranking Clientes ───────────────────────────────────────────────────
-    ws_rank = wb.get('Ranking Clientes')
+    ws_rank = wb['Ranking Clientes'] if 'Ranking Clientes' in wb.sheetnames else None
     if ws_rank is not None:
         r       = ws_rank.max_row + 2
         df_cli_r = df_mes[df_mes['EsMercado'] == False]
@@ -1017,7 +1017,7 @@ def agregar_mes(existing_bytes, mes_name, df_mes, tc_mep, tc_ccl):
                     if ci == 3: c.number_format = '#,##0'
 
     # ── 5. Detalle ARS ────────────────────────────────────────────────────────
-    ws_dars = wb.get('Detalle ARS')
+    ws_dars = wb['Detalle ARS'] if 'Detalle ARS' in wb.sheetnames else None
     if ws_dars is not None:
         r      = ws_dars.max_row + 2
         df_ars = df_mes[df_mes['Moneda'] == 'ARS']
@@ -1050,7 +1050,7 @@ def agregar_mes(existing_bytes, mes_name, df_mes, tc_mep, tc_ccl):
             r += 1
 
     # ── 6. Detalle USD ────────────────────────────────────────────────────────
-    ws_dusd = wb.get('Detalle USD')
+    ws_dusd = wb['Detalle USD'] if 'Detalle USD' in wb.sheetnames else None
     if ws_dusd is not None:
         r      = ws_dusd.max_row + 2
         df_usd = df_mes[df_mes['Moneda'] == 'USD']
