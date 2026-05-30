@@ -2,6 +2,12 @@ import streamlit as st
 import traceback
 from skills.tesoreria.logic import MESES_ORDER, TC_HISTORICOS, procesar_mes
 
+_MES_ABR = {
+    'Enero': 'Ene', 'Febrero': 'Feb', 'Marzo': 'Mar', 'Abril': 'Abr',
+    'Mayo': 'May', 'Junio': 'Jun', 'Julio': 'Jul', 'Agosto': 'Ago',
+    'Septiembre': 'Sep', 'Octubre': 'Oct', 'Noviembre': 'Nov', 'Diciembre': 'Dic',
+}
+
 
 # Clave de session_state donde se acumulan los meses
 _KEY = "tes_months"
@@ -74,7 +80,7 @@ def render():
     # ─────────────────────────────────────────────────────────────────────────
     # SECCIÓN 1: Cargar mes
     # ─────────────────────────────────────────────────────────────────────────
-    st.subheader("Cargar mes")
+    st.subheader("Parámetros del mes")
 
     col_mes, col_anio, col_tc1, col_tc2 = st.columns([2, 1, 1.5, 1.5])
     with col_mes:
@@ -253,7 +259,8 @@ def render():
                                 tc_mep         = entry["tc_mep"],
                                 tc_ccl         = entry["tc_ccl"],
                             )
-                    fname = base_file.name  # conservar nombre del base
+                    last_mes = list(months_ordered.keys())[-1]
+                    fname = f"Reporte_Tesoreria_{_MES_ABR.get(last_mes, last_mes)}{int(anio_sel)}.xlsx"
                 else:
                     # ── Patrón nuevo: generar desde cero ─────────────────────
                     from skills.tesoreria.logic import generar_reporte
