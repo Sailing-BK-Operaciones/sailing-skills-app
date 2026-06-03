@@ -335,8 +335,7 @@ OP_SKILLS = [
     "Control Márgenes Gara BYMA",
     "Risk Position",
     "Risk Monitoring Client",
-    "Distribución Gara BYMA",
-    "Genera TXT Gara NASDAQ",
+    "Arreglo Dev Gara Gallo",
     "Collateral Position",
     "Arreglos Garantías",
     "Control diario Op-SDIB",
@@ -348,6 +347,8 @@ GEST_SKILLS = [
     "Reporte Operativo",
 ]
 SUSP_SKILLS = [
+    "Distribución Gara BYMA",
+    "Genera TXT Gara NASDAQ",
     "Settlement Position",
     "Settlement Instruction",
     "Settlement Obligation",
@@ -476,6 +477,9 @@ elif skill == "Distribución Gara BYMA":
     render()
 elif skill == "Genera TXT Gara NASDAQ":
     from skills.genera_txt_gara_nasdaq.ui import render
+    render()
+elif skill == "Arreglo Dev Gara Gallo":
+    from skills.arreglo_dev_gara_gallo.ui import render
     render()
 elif skill == "Collateral Position":
     from skills.Collateral_position.ui import render
