@@ -333,12 +333,11 @@ OP_SKILLS = [
     "Archivos Compartidos",
     "Actual Position",
     "Control Márgenes Gara BYMA",
-    "Risk Position",
-    "Risk Monitoring Client",
     "Arreglo Dev Gara Gallo",
-    "Collateral Position",
     "Arreglos Garantías",
     "Control diario Op-SDIB",
+    "Collateral Position",
+    "Risk Monitoring Client",
     "Control Aforos BYMA",
     "Conversión Dólares Renta",
 ]
@@ -347,6 +346,7 @@ GEST_SKILLS = [
     "Reporte Operativo",
 ]
 SUSP_SKILLS = [
+    "Risk Position",
     "Distribución Gara BYMA",
     "Genera TXT Gara NASDAQ",
     "Settlement Position",
