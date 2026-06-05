@@ -3,11 +3,12 @@ from shared_store import save_file, get_meta, is_loaded
 
 # ── Archivos compartidos ───────────────────────────────────────────────────────
 DEL_DIA = [
-    {"key": "shared_pc",            "label": "PC*.XLS",                     "desc": "Precios de cierre del día (hoja Precios_de_Cierre)",          "types": ["xls", "xlsx"]},
-    {"key": "shared_sagaclte",      "label": "SAGACLTE.XLS",                "desc": "Garantías en BYMA por comitente (hoja Saldos_de_Garantias)",  "types": ["xls", "xlsx"]},
-    {"key": "shared_sateclte",      "label": "SATECLTE.XLS",                "desc": "Tenencia disponible por comitente (hoja Saldos_de_Tenencia)", "types": ["xls", "xlsx"]},
-    {"key": "shared_contbole",      "label": "CONTBOLE.XLS",                "desc": "Boletos del día desde Gallo (hoja Control_de_Boletos)",       "types": ["xls", "xlsx"]},
-    {"key": "shared_saldos_nasdaq", "label": "saldos al inicio Nasdaq.csv", "desc": "Saldos de inicio de cuentas NASDAQ",                         "types": ["csv"]},
+    {"key": "shared_pc",            "label": "PC*.XLS",                     "desc": "Precios de cierre del día (hoja Precios_de_Cierre)",              "types": ["xls", "xlsx"]},
+    {"key": "shared_sagaclte",      "label": "SAGACLTE.XLS",                "desc": "Garantías en BYMA por comitente (hoja Saldos_de_Garantias)",      "types": ["xls", "xlsx"]},
+    {"key": "shared_sateclte",      "label": "SATECLTE.XLS",                "desc": "Tenencia disponible por comitente (hoja Saldos_de_Tenencia)",     "types": ["xls", "xlsx"]},
+    {"key": "shared_contbole",      "label": "CONTBOLE.XLS",                "desc": "Boletos del día desde Gallo (hoja Control_de_Boletos)",           "types": ["xls", "xlsx"]},
+    {"key": "shared_saldos_nasdaq", "label": "saldos al inicio Nasdaq.csv", "desc": "Saldos de inicio de cuentas NASDAQ",                             "types": ["csv"]},
+    {"key": "shared_prices",        "label": "table-prices_*.csv",          "desc": "Cotizaciones BYMA Clearing (MEP/CCL) — usado por Actual Position", "types": ["csv"]},
 ]
 
 REFERENCIA = [

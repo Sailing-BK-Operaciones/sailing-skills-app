@@ -101,6 +101,39 @@ def parse_vto_caucion(asset: str, process_date: date):
 #  CARGA DE ARCHIVOS (adaptados a UploadedFile / BytesIO)
 # ══════════════════════════════════════════════════════════════════════════════
 
+def cargar_cotizaciones_bc(prices_file) -> dict:
+    """
+    Lee el table-prices_*.csv y extrae los tipos de cambio de BYMA Clearing.
+      ARS/USD → TC MEP = 1 / precio
+      ARS/EXT → TC CCL = 1 / precio
+    Retorna dict con 'mep', 'ccl', 'archivo' (o vacío si no está disponible).
+    """
+    if prices_file is None:
+        return {}
+    try:
+        prices_file.seek(0)
+        df = pd.read_csv(prices_file, quotechar='"', encoding="utf-8-sig")
+        df.columns = [c.strip().strip('"') for c in df.columns]
+        for col in df.select_dtypes(include="object").columns:
+            df[col] = df[col].str.strip().str.strip('"')
+        df["Price"] = pd.to_numeric(df["Price"], errors="coerce")
+
+        def _tc(asset_code):
+            row = df[df["Asset"] == asset_code]
+            if row.empty:
+                return None
+            precio = row.iloc[0]["Price"]
+            return 1 / precio if precio and precio != 0 else None
+
+        return {
+            "mep":     _tc("ARS/USD"),
+            "ccl":     _tc("ARS/EXT"),
+            "archivo": getattr(prices_file, "name", "table-prices_*.csv"),
+        }
+    except Exception:
+        return {}
+
+
 def cargar_mapa_cvsa(especies_file) -> dict:
     if especies_file is None:
         return {}
@@ -260,6 +293,51 @@ def _cel_dato(ws, row, col, value, num_fmt=None, bg=None, bold=False, align="rig
 # ══════════════════════════════════════════════════════════════════════════════
 #  ESCRITURA DE HOJAS (idéntica al script local, sin cambios)
 # ══════════════════════════════════════════════════════════════════════════════
+
+def escribir_hoja_cotizaciones(wb, cotizaciones: dict, process_date: date):
+    """Primera hoja: cotizaciones Dólar MEP y CCL según BYMA Clearing."""
+    ws = wb.create_sheet("Cotizaciones BC", 0)
+    ws.sheet_view.showGridLines = False
+
+    ws.merge_cells("A1:C1")
+    c = ws["A1"]
+    c.value     = f"COTIZACIONES BYMA CLEARING — {process_date.strftime('%d/%m/%Y')}"
+    c.font      = Font(bold=True, size=13, color="FFFFFF")
+    c.fill      = PatternFill("solid", fgColor=COL_BYMA_BLUE)
+    c.alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[1].height = 30
+
+    for i, h in enumerate(["Tipo de Cambio", "Valor (ARS)", "Fuente"], 1):
+        _cel_header(ws, 3, i, h)
+
+    mep     = cotizaciones.get("mep")
+    ccl     = cotizaciones.get("ccl")
+    archivo = cotizaciones.get("archivo", "table-prices_*.csv")
+
+    for offset, (label, valor) in enumerate([("Dólar MEP (ARS/USD)", mep), ("Dólar CCL (ARS/EXT)", ccl)]):
+        r = 4 + offset
+        _cel_dato(ws, r, 1, label, align="left")
+        if valor is not None:
+            _cel_dato(ws, r, 2, valor, num_fmt=NUM_FMT, bold=True)
+        else:
+            c2 = ws.cell(row=r, column=2, value="N/D")
+            c2.font      = Font(italic=True, color="595959")
+            c2.alignment = Alignment(horizontal="right", vertical="center")
+            c2.border    = _borde()
+        _cel_dato(ws, r, 3, "BYMA Clearing", align="center")
+
+    nota_r = 7
+    ws.merge_cells(f"A{nota_r}:C{nota_r}")
+    cn = ws.cell(row=nota_r, column=1,
+                 value=f"Fuente: {archivo}  |  Cálculo: 1 / cotización ARS publicada por BC")
+    cn.font      = Font(italic=True, size=9, color="595959")
+    cn.alignment = Alignment(horizontal="left", vertical="center")
+
+    for i, w in enumerate([28, 18, 20], 1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+    ws.freeze_panes = "A2"
+    return ws
+
 
 def escribir_hoja_moneda(wb, sheet_name, df_ok, moneda, process_date, saldo_inicio=None):
     ws = wb.create_sheet(sheet_name)
@@ -554,11 +632,12 @@ def _generar_xls_opciones(df_ok) -> BytesIO:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def generar_reporte(csv_file, especies_file=None, saldos_inicio_file=None,
-                    process_date: date = None):
+                    process_date: date = None, prices_file=None):
     """
     csv_file          : table-currentActualPositions_*.csv (UploadedFile)
     especies_file     : ESPECIES.XLS (UploadedFile, opcional)
     saldos_inicio_file: saldos al inicio Nasdaq.csv (UploadedFile, opcional)
+    prices_file       : table-prices_*.csv (UploadedFile, opcional) — cotizaciones MEP/CCL
     process_date      : date (default: hoy)
 
     Devuelve (BytesIO xlsx, BytesIO xls_opciones, dict resumen).
@@ -566,8 +645,9 @@ def generar_reporte(csv_file, especies_file=None, saldos_inicio_file=None,
     if process_date is None:
         process_date = date.today()
 
-    mapa_cvsa     = cargar_mapa_cvsa(especies_file)
+    mapa_cvsa    = cargar_mapa_cvsa(especies_file)
     saldos_inicio = cargar_saldos_inicio(saldos_inicio_file)
+    cotizaciones  = cargar_cotizaciones_bc(prices_file)
     df_ok, df_verif = cargar_y_clasificar(csv_file, process_date)
 
     total_rows = len(df_ok) + len(df_verif)
@@ -579,6 +659,10 @@ def generar_reporte(csv_file, especies_file=None, saldos_inicio_file=None,
 
     wb = openpyxl.Workbook()
     wb.remove(wb.active)
+
+    # Hoja 1: cotizaciones BC (siempre primera, aunque no haya datos)
+    escribir_hoja_cotizaciones(wb, cotizaciones, process_date)
+
     for moneda, sheet_name in MONEDAS:
         escribir_hoja_moneda(wb, sheet_name, df_ok, moneda, process_date,
                              saldo_inicio=saldos_inicio.get(moneda))
@@ -592,13 +676,16 @@ def generar_reporte(csv_file, especies_file=None, saldos_inicio_file=None,
     xls_buf = _generar_xls_opciones(df_ok)
 
     resumen = {
-        "process_date":   process_date.strftime("%d/%m/%Y"),
-        "total_rows":     total_rows,
-        "clasificados":   len(df_ok),
-        "verificacion":   len(df_verif),
-        "tiene_especies": bool(mapa_cvsa),
-        "tiene_saldos":   bool(saldos_inicio),
-        "n_op":           int((df_ok["Concepto"] == "OP").sum()) if not df_ok.empty else 0,
-        "verif_assets":   df_verif["Asset"].unique().tolist() if not df_verif.empty else [],
+        "process_date":    process_date.strftime("%d/%m/%Y"),
+        "total_rows":      total_rows,
+        "clasificados":    len(df_ok),
+        "verificacion":    len(df_verif),
+        "tiene_especies":  bool(mapa_cvsa),
+        "tiene_saldos":    bool(saldos_inicio),
+        "tiene_cotiz":     bool(cotizaciones.get("mep") or cotizaciones.get("ccl")),
+        "cotiz_mep":       cotizaciones.get("mep"),
+        "cotiz_ccl":       cotizaciones.get("ccl"),
+        "n_op":            int((df_ok["Concepto"] == "OP").sum()) if not df_ok.empty else 0,
+        "verif_assets":    df_verif["Asset"].unique().tolist() if not df_verif.empty else [],
     }
     return xlsx_buf, xls_buf, resumen

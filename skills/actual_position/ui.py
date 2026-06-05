@@ -36,7 +36,7 @@ def render():
         process_date = st.date_input("Fecha de proceso", value=date.today(), key="ap_fecha")
 
     with st.expander("Archivos opcionales"):
-        col3, col4 = st.columns(2)
+        col3, col4, col5 = st.columns(3)
         with col3:
             especies_file = shared_or_upload(
                 "shared_especies", "ESPECIES.XLS (para Código CVSA)", ["xls", "xlsx"], "ap_especies"
@@ -44,6 +44,10 @@ def render():
         with col4:
             saldos_file = shared_or_upload(
                 "shared_saldos_nasdaq", "saldos al inicio Nasdaq.csv", ["csv"], "ap_saldos"
+            )
+        with col5:
+            prices_file = shared_or_upload(
+                "shared_prices", "table-prices_*.csv (cotizaciones MEP/CCL)", ["csv"], "ap_prices"
             )
 
     st.divider()
@@ -62,7 +66,8 @@ def render():
             try:
                 from skills.actual_position.logic import generar_reporte
                 xlsx_buf, xls_buf, r = generar_reporte(
-                    csv_file, especies_file, saldos_file, process_date
+                    csv_file, especies_file, saldos_file, process_date,
+                    prices_file=prices_file,
                 )
                 st.session_state["ap_result"] = {
                     "xlsx_buf":    xlsx_buf,
@@ -92,9 +97,15 @@ def render():
     col_b.metric("Filas clasificadas", r["clasificados"])
     col_c.metric("Para verificar",     r["verificacion"])
 
+    if r.get("tiene_cotiz"):
+        mep_str = f"{r['cotiz_mep']:,.2f}" if r.get("cotiz_mep") else "N/D"
+        ccl_str = f"{r['cotiz_ccl']:,.2f}" if r.get("cotiz_ccl") else "N/D"
+        st.info(f"Cotizaciones BC — MEP: {mep_str} | CCL: {ccl_str}")
+
     flags = []
     if not r["tiene_especies"]: flags.append("ESPECIES.XLS no subido — sin Código CVSA")
     if not r["tiene_saldos"]:   flags.append("Saldos inicio no subidos — sin saldo proyectado")
+    if not r.get("tiene_cotiz"): flags.append("table-prices_*.csv no subido — hoja Cotizaciones BC sin datos")
     if r["verificacion"] > 0:
         flags.append(f"Hay {r['verificacion']} filas en Verificación: {', '.join(r['verif_assets'])}")
     for msg in flags:
