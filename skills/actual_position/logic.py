@@ -246,7 +246,11 @@ def cargar_y_clasificar(csv_file, process_date: date):
             nq = row["Net Quantity"]
             return max(nq, 0.0), max(-nq, 0.0)
         else:
-            return abs(row["Short Market Value"]), abs(row["Long Market Value"])
+            smv = row["Short Market Value"]
+            lmv = row["Long Market Value"]
+            # neto desde perspectiva Sailing: recibe cuando SMV<0 o LMV<0
+            neto = -(lmv + smv)
+            return max(neto, 0.0), max(-neto, 0.0)
 
     flujos = df.apply(calc_flujos, axis=1)
     df["A_Recibir"]  = flujos.apply(lambda x: x[0])
