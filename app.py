@@ -334,6 +334,7 @@ OP_SKILLS = [
     "Actual Position",
     "Control Márgenes Gara BYMA",
     "Arreglo Dev Gara Gallo",
+    "Genera SI2 NASDAQ",
     "Arreglos Garantías",
     "Control diario Op-SDIB",
     "Collateral Position",
@@ -480,6 +481,9 @@ elif skill == "Genera TXT Gara NASDAQ":
     render()
 elif skill == "Arreglo Dev Gara Gallo":
     from skills.arreglo_dev_gara_gallo.ui import render
+    render()
+elif skill == "Genera SI2 NASDAQ":
+    from skills.generar_withdraw_si2.ui import render
     render()
 elif skill == "Collateral Position":
     from skills.Collateral_position.ui import render
