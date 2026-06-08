@@ -333,7 +333,7 @@ OP_SKILLS = [
     "Archivos Compartidos",
     "Actual Position",
     "Control Márgenes Gara BYMA",
-    "Genera SI2 NASDAQ",
+    "Consolida SI2 para NASDAQ",
     "Arreglos Garantías",
     "Control diario Op-SDIB",
     "Collateral Position",
@@ -481,7 +481,7 @@ elif skill == "Genera TXT Gara NASDAQ":
 elif skill == "Arreglo Dev Gara Gallo":
     from skills.arreglo_dev_gara_gallo.ui import render
     render()
-elif skill == "Genera SI2 NASDAQ":
+elif skill == "Consolida SI2 para NASDAQ":
     from skills.generar_withdraw_si2.ui import render
     render()
 elif skill == "Collateral Position":
