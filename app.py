@@ -333,7 +333,6 @@ OP_SKILLS = [
     "Archivos Compartidos",
     "Actual Position",
     "Control Márgenes Gara BYMA",
-    "Arreglo Dev Gara Gallo",
     "Genera SI2 NASDAQ",
     "Arreglos Garantías",
     "Control diario Op-SDIB",
