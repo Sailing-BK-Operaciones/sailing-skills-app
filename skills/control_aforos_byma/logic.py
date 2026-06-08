@@ -98,7 +98,7 @@ def _xls_str(cell):
     return str(cell.value).strip()
 
 
-_DATE_RE = re.compile(r'\b(\d{2})[/\-](\d{2})[/\-](\d{2,4})\b')
+_DATE_RE = re.compile(r'(?<!\d)(\d{2})[/\-](\d{2})[/\-](\d{2,4})(?!\d)')
 
 
 def _fecha_vencimiento(wb_xls, ws_xls, row_idx):
@@ -164,7 +164,6 @@ def generar_control(especies_file):
     diferencias    = []
     sin_lista      = []
     lista_sin_byma = []
-    rc_rows        = []   # para el Reporte Comercial
     vencidos_filtrados = 0
     total_byma = 0
     total_ok   = 0
@@ -185,13 +184,6 @@ def generar_control(especies_file):
         tipo_activo = _xls_str(ws_xls.cell(r, 18))    # Tipo_de_Activo
         lista       = _xls_int(ws_xls.cell(r, 5)) or 0
 
-        # Campos extra para Reporte Comercial
-        ticker_mep  = _xls_str(ws_xls.cell(r, COL_H.get("Parid", 10)))
-        ticker_cbl  = _xls_str(ws_xls.cell(r, COL_H.get("Cable", 11)))
-        emisor      = _xls_str(ws_xls.cell(r, COL_H.get("Emisor", 17)))
-        precio_tipo = _xls_str(ws_xls.cell(r, 4))  # col Precio (Normal/Porc.)
-        vencim_raw  = _xls_str(ws_xls.cell(r, 15))  # col Vencim
-
         # Col 26 = haircut BYMA API
         try:
             raw26 = ws_xls.cell(r, 26)
@@ -204,16 +196,6 @@ def generar_control(especies_file):
         if haircut > 0:
             total_byma += 1
             aforo_byma = 100 - haircut
-
-            # ── Acumular para Reporte Comercial ──────────────────────────────
-            rc_rows.append({
-                "cvsa": cvsa_str, "tipo_activo": tipo_activo, "precio": precio_tipo,
-                "ticker_ars": ticker_norm, "ticker_mep": ticker_mep,
-                "ticker_cbl": ticker_cbl, "nombre": nombre, "emisor": emisor,
-                "aforo": aforo_byma, "haircut": haircut, "vencim": vencim_raw,
-                "tiene_ars": bool(ticker_norm), "tiene_mep": bool(ticker_mep),
-                "tiene_cbl": bool(ticker_cbl),
-            })
 
             # ── Control de aforos ────────────────────────────────────────────
             if lista == 0:
@@ -352,6 +334,36 @@ def generar_control(especies_file):
     wb_dif.save(buf_dif)
     xlsx_dif_bytes = buf_dif.getvalue()
 
+    # ── Reconstruir lista especies aceptadas para Reporte Comercial ──────────
+    # Loop separado con float() para haircut (más robusto que _xls_int)
+    rc_rows = []
+    for r in range(1, ws_xls.nrows):
+        hc_raw = ws_xls.cell_value(r, COL_H.get("Aforo", 26))
+        try:
+            haircut = float(str(hc_raw).strip())
+        except Exception:
+            haircut = 0
+        if haircut <= 0:
+            continue
+        aforo       = round(100 - haircut)
+        cvsa        = str(ws_xls.cell_value(r, COL_H.get("Codigo", 0))).strip().strip("'").zfill(5)
+        nombre      = str(ws_xls.cell_value(r, COL_H.get("Nombre_de_la_Especie", 1))).strip().strip("'")
+        ticker_ars  = str(ws_xls.cell_value(r, COL_H.get("Norm.", 9))).strip().strip("'")
+        ticker_mep  = str(ws_xls.cell_value(r, COL_H.get("Parid", 10))).strip().strip("'")
+        ticker_cbl  = str(ws_xls.cell_value(r, COL_H.get("Cable", 11))).strip().strip("'")
+        tipo_activo = str(ws_xls.cell_value(r, COL_H.get("Tipo_de_Activo", 18))).strip().strip("'")
+        precio      = str(ws_xls.cell_value(r, COL_H.get("Precio", 4))).strip().strip("'")
+        vencim      = str(ws_xls.cell_value(r, COL_H.get("Vencim", 15))).strip().strip("'")
+        emisor      = str(ws_xls.cell_value(r, COL_H.get("Emisor", 17))).strip().strip("'")
+        rc_rows.append({
+            "cvsa": cvsa, "tipo_activo": tipo_activo, "precio": precio,
+            "ticker_ars": ticker_ars, "ticker_mep": ticker_mep,
+            "ticker_cbl": ticker_cbl, "nombre": nombre, "emisor": emisor,
+            "aforo": aforo, "haircut": haircut, "vencim": vencim,
+            "tiene_ars": bool(ticker_ars), "tiene_mep": bool(ticker_mep),
+            "tiene_cbl": bool(ticker_cbl),
+        })
+
     # ════════════════════════════════════════════════════════════════════════════
     # Excel 2 — Reporte Comercial Garantias BYMA DD-MM-AAAA.xlsx
     # ════════════════════════════════════════════════════════════════════════════
@@ -375,10 +387,10 @@ def generar_control(especies_file):
         if a >= 65: return "FCE4D6"
         return "F2DCDB"
 
-    def rc_hdr_cell(ws, row, col, value, bg=RC_HEADER, fg="FFFFFF", bold=True):
+    def rc_hdr_cell(ws, row, col, value, bg=RC_HEADER, fg="FFFFFF", bold=True, center=True):
         c = ws.cell(row=row, column=col, value=value)
         c.fill = rc_fill(bg); c.font = Font(bold=bold, color=fg, name="Calibri", size=10)
-        c.alignment = Alignment(horizontal="center", vertical="center")
+        c.alignment = Alignment(horizontal="center" if center else "left", vertical="center")
         c.border = rc_border_thin(); return c
 
     def rc_data_cell(ws, row, col, value, bg=RC_WHITE, bold=False, center=False):
