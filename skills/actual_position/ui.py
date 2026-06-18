@@ -22,6 +22,10 @@ def render():
         - `ESPECIES.XLS` — agrega el Código CVSA en la hoja de Movimientos por Especie
           (se toma desde Archivos Compartidos si ya está cargado)
         - `saldos al inicio Nasdaq.csv` — muestra el Saldo proyectado del día en cada hoja de moneda
+        - `table-prices_*.csv` — cotizaciones MEP/CCL en la primera hoja
+        - `table-optionExercises_*.csv` — **input local de esta skill** (no compartido).
+          Si hay ejercicios de opciones del día hábil anterior, los suma al concepto **CN ARS**
+          y agrega una hoja "Ejercicios" con el detalle por comitente.
 
         La fecha de proceso por defecto es hoy. Si el CSV es de otro día, cambiala abajo.
         """)
@@ -50,6 +54,17 @@ def render():
                 "shared_prices", "table-prices_*.csv (cotizaciones MEP/CCL)", ["csv"], "ap_prices"
             )
 
+        # Ejercicios de opciones — input LOCAL de esta skill (no compartido).
+        # Subir solo cuando hubo ejercicios el día hábil anterior.
+        st.markdown("**Ejercicios de opciones** (solo si los hubo):")
+        exercises_file = st.file_uploader(
+            "table-optionExercises_*.csv (opcional — se suma a CN ARS)",
+            type=["csv"], key="ap_exercises",
+            help="Si está presente, los ejercicios cuyo Exercise Date sea el día hábil "
+                 "anterior se incluyen en el concepto CN ARS y aparecen detallados "
+                 "en una hoja 'Ejercicios'."
+        )
+
     st.divider()
 
     # ── Inicializar result state ───────────────────────────────────────────────
@@ -68,6 +83,7 @@ def render():
                 xlsx_buf, xls_buf, r = generar_reporte(
                     csv_file, especies_file, saldos_file, process_date,
                     prices_file=prices_file,
+                    exercises_file=exercises_file,
                 )
                 st.session_state["ap_result"] = {
                     "xlsx_buf":    xlsx_buf,
@@ -101,6 +117,13 @@ def render():
         mep_str = f"{r['cotiz_mep']:,.2f}" if r.get("cotiz_mep") else "N/D"
         ccl_str = f"{r['cotiz_ccl']:,.2f}" if r.get("cotiz_ccl") else "N/D"
         st.info(f"Cotizaciones BC — MEP: {mep_str} | CCL: {ccl_str}")
+
+    if r.get("n_ejercicios", 0) > 0:
+        st.info(
+            f"Ejercicios de opciones incluidos en CN ARS — "
+            f"{r['n_ejercicios']} fila(s), importe ARS {r['importe_ejerc']:,.2f}. "
+            "Ver hoja 'Ejercicios' para el detalle por comitente."
+        )
 
     flags = []
     if not r["tiene_especies"]: flags.append("ESPECIES.XLS no subido — sin Código CVSA")

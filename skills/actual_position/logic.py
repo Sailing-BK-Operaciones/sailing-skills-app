@@ -3,9 +3,10 @@ Actual Position — versión web (Streamlit).
 Recibe UploadedFiles; devuelve (BytesIO xlsx, BytesIO xls_opciones, dict resumen).
 """
 
+import re
 import warnings
 from io import BytesIO
-from datetime import date
+from datetime import date, timedelta
 
 import pandas as pd
 import openpyxl
@@ -268,6 +269,132 @@ def cargar_y_clasificar(csv_file, process_date: date):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+#  EJERCICIOS DE OPCIONES (input opcional)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _prev_business_day(d: date) -> date:
+    """Día hábil anterior (Lun → Vie; resto → −1 día calendario)."""
+    if d.weekday() == 0:        # lunes
+        return d - timedelta(days=3)
+    if d.weekday() == 6:        # domingo
+        return d - timedelta(days=2)
+    return d - timedelta(days=1)
+
+
+def cargar_ejercicios_opciones(exercises_file, process_date: date):
+    """
+    Carga el CSV opcional ``table-optionExercises_*.csv``.
+
+    Retorna (df_concat, df_detalle):
+      - df_concat: filas sintéticas con columnas mínimas para sumarse a df_ok
+        en el concepto CN ARS del día.
+      - df_detalle: vista enriquecida para la hoja "Ejercicios".
+
+    BC es acumulativo → filtra por Exercise Date = día hábil anterior al
+    proceso (cash settlement T+1).
+
+    1 contrato = 100 acciones. Importe (ARS) = |Quantity| × 100 × Strike.
+
+    Dirección del cash:
+      CALL Long ejerce    → A_Entregar  (paga el strike)
+      CALL Short asignado → A_Recibir   (cobra el strike)
+      PUT  Long ejerce    → A_Recibir   (vende a strike)
+      PUT  Short asignado → A_Entregar  (paga el strike)
+    """
+    vacio = pd.DataFrame()
+    if exercises_file is None:
+        return vacio, vacio
+
+    try:
+        exercises_file.seek(0)
+        df = pd.read_csv(exercises_file, quotechar='"', encoding="utf-8-sig")
+        df.columns = [c.strip().strip('"') for c in df.columns]
+        for col in df.select_dtypes(include="object").columns:
+            df[col] = df[col].str.strip().str.strip('"')
+
+        df["Exercise Date"] = pd.to_datetime(df["Exercise Date"], errors="coerce")
+        for col in ("Strike Price", "Exercised Quantity", "Assigned Quantity"):
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
+
+        exercise_target = _prev_business_day(process_date)
+        df = df[df["Exercise Date"].dt.date == exercise_target].copy()
+        if df.empty:
+            return vacio, vacio
+
+        filas_concat, filas_detalle = [], []
+        for _, row in df.iterrows():
+            strike    = float(row.get("Strike Price", 0))
+            exercised = float(row.get("Exercised Quantity", 0))
+            assigned  = float(row.get("Assigned Quantity",  0))
+            opt_type  = str(row.get("Option Type", "")).strip().upper()
+
+            qty = abs(exercised) if exercised != 0 else abs(assigned)
+            if qty == 0 or strike == 0:
+                continue
+            qty_acciones = qty * 100
+            importe      = qty_acciones * strike
+            es_long      = abs(exercised) > 0
+            sentido      = "Long ejerce" if es_long else "Short asignado"
+
+            if opt_type == "CALL":
+                a_rec, a_ent = (0.0, importe) if es_long else (importe, 0.0)
+            else:
+                a_rec, a_ent = (importe, 0.0) if es_long else (0.0, importe)
+
+            account = str(row.get("Account", ""))
+            m = re.search(r"_(\d+)\s*\(", account)
+            comitente = m.group(1) if m else ""
+            asset_opc = str(row.get("Asset", "")).strip()
+
+            filas_concat.append({
+                "Asset":              f"EJ.OP {asset_opc}",
+                "Account":            account,
+                "Concepto":           "CN",
+                "Segmento":           "G",
+                "Moneda":             "ARS",
+                "Trade Date":         pd.Timestamp(exercise_target),
+                "Settlement Date":    pd.Timestamp(process_date),
+                "Short Market Value": 0.0,
+                "Long Market Value":  0.0,
+                "Net Quantity":       0.0,
+                "Long Quantity":      0.0,
+                "Short Quantity":     0.0,
+                "Filter Node":        "AR.BYMA.CT.DER.O.EJERCICIO",
+                "Para_Verificar":     False,
+                "Motivo_Verificar":   "",
+                "A_Recibir":          a_rec,
+                "A_Entregar":         a_ent,
+                "Neto":               a_rec - a_ent,
+                "Comitente":          comitente,
+                "Fecha_Vto":          None,
+                "Es_Ejercicio":       True,
+            })
+
+            filas_detalle.append({
+                "Comitente":     comitente,
+                "Opción":        asset_opc,
+                "Tipo":          opt_type,
+                "Strike":        strike,
+                "Contratos":     qty,
+                "Acciones":      qty_acciones,
+                "Sentido":       sentido,
+                "Importe ARS":   importe,
+                "A Recibir":     a_rec,
+                "A Entregar":    a_ent,
+                "Exercise Date": exercise_target,
+                "Settlement":    process_date,
+            })
+
+        if not filas_concat:
+            return vacio, vacio
+        return pd.DataFrame(filas_concat), pd.DataFrame(filas_detalle)
+
+    except Exception:
+        return vacio, vacio
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 #  HELPERS EXCEL
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -429,9 +556,12 @@ def escribir_hoja_moneda(wb, sheet_name, df_ok, moneda, process_date, saldo_inic
     r += 1
 
     if not dm.empty:
-        orden_concepto = {"CI":0,"CN":1,"FC":2,"FV":3,"OP":4}
-        dm["_ord"] = dm["Concepto"].map(orden_concepto).fillna(99)
-        for (seg, concepto), grp in dm.sort_values(["Segmento","_ord"]).groupby(
+        # OP excluido: desde el pasaje a T+0 ya liquida en CI/CN, queda en cero.
+        # Se mantiene en TOTALES por defensa, pero no aparece en el DETALLE.
+        dm_det = dm[dm["Concepto"] != "OP"].copy()
+        orden_concepto = {"CI":0,"CN":1,"FC":2,"FV":3}
+        dm_det["_ord"] = dm_det["Concepto"].map(orden_concepto).fillna(99)
+        for (seg, concepto), grp in dm_det.sort_values(["Segmento","_ord"]).groupby(
                 ["Segmento","Concepto"], sort=False):
             ar, ae = grp["A_Recibir"].sum(), grp["A_Entregar"].sum()
             vto_val = ""
@@ -475,6 +605,9 @@ def escribir_hoja_movimientos(wb, df_ok, process_date, mapa_cvsa):
 
     if not df_ok.empty:
         df_mov = df_ok[df_ok["Concepto"].isin(["CI","CN","OP"])].copy()
+        # Los ejercicios aportan cash, no VN de especie subyacente
+        if "Es_Ejercicio" in df_mov.columns:
+            df_mov = df_mov[df_mov["Es_Ejercicio"] != True].copy()
     else:
         df_mov = pd.DataFrame()
 
@@ -520,6 +653,74 @@ def escribir_hoja_movimientos(wb, df_ok, process_date, mapa_cvsa):
     for i, w in enumerate([18,16,12,12,16,16,16], 1):
         ws.column_dimensions[get_column_letter(i)].width = w
     ws.freeze_panes = "A4"
+
+
+def escribir_hoja_ejercicios(wb, df_detalle: pd.DataFrame, process_date: date):
+    """Hoja 'Ejercicios' — detalle de ejercicios de opciones incluidos en CN.
+    Sólo se crea si df_detalle tiene filas."""
+    if df_detalle.empty:
+        return None
+
+    ws = wb.create_sheet("Ejercicios")
+    ws.sheet_view.showGridLines = False
+
+    ws.merge_cells("A1:L1")
+    c = ws["A1"]
+    c.value     = (f"EJERCICIOS DE OPCIONES — incluidos en CN ARS — "
+                   f"proceso {process_date.strftime('%d/%m/%Y')}")
+    c.font      = Font(bold=True, size=13, color="FFFFFF")
+    c.fill      = PatternFill("solid", fgColor=COL_BYMA_BLUE)
+    c.alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[1].height = 28
+
+    ws.merge_cells("A2:L2")
+    nota = ws.cell(row=2, column=1,
+                   value="Importe = |Cantidad contratos| × 100 acciones × Strike. "
+                         "Filtro: Exercise Date = día hábil anterior al proceso (cash settlement T+1).")
+    nota.font = Font(italic=True, size=9, color="595959")
+
+    headers = ["Comitente","Opción","Tipo","Strike","Contratos","Acciones",
+               "Sentido","Importe ARS","A Recibir","A Entregar",
+               "Exercise Date","Settlement"]
+    r = 3
+    for i, h in enumerate(headers, 1):
+        _cel_header(ws, r, i, h)
+
+    r = 4
+    for _, fila in df_detalle.iterrows():
+        _cel_dato(ws, r, 1, fila["Comitente"],   align="center")
+        _cel_dato(ws, r, 2, fila["Opción"],      align="left")
+        _cel_dato(ws, r, 3, fila["Tipo"],        align="center", bold=True)
+        _cel_dato(ws, r, 4, fila["Strike"],      num_fmt=NUM_FMT)
+        _cel_dato(ws, r, 5, fila["Contratos"],   num_fmt="#,##0")
+        _cel_dato(ws, r, 6, fila["Acciones"],    num_fmt="#,##0")
+        _cel_dato(ws, r, 7, fila["Sentido"],     align="center")
+        _cel_dato(ws, r, 8, fila["Importe ARS"], num_fmt=NUM_FMT, bold=True)
+        _cel_dato(ws, r, 9, fila["A Recibir"],   num_fmt=NUM_FMT)
+        _cel_dato(ws, r, 10, fila["A Entregar"], num_fmt=NUM_FMT)
+        c11 = _cel_dato(ws, r, 11, fila["Exercise Date"], align="center")
+        c11.number_format = DATE_FMT
+        c12 = _cel_dato(ws, r, 12, fila["Settlement"], align="center")
+        c12.number_format = DATE_FMT
+        r += 1
+
+    tot_imp = df_detalle["Importe ARS"].sum()
+    tot_rec = df_detalle["A Recibir"].sum()
+    tot_ent = df_detalle["A Entregar"].sum()
+    _cel_dato(ws, r, 1, "TOTAL", align="center", bg=COL_TOTAL_GRAY, bold=True)
+    for col in range(2, 8):
+        _cel_dato(ws, r, col, "", bg=COL_TOTAL_GRAY)
+    _cel_dato(ws, r, 8,  tot_imp, num_fmt=NUM_FMT, bg=COL_TOTAL_GRAY, bold=True)
+    _cel_dato(ws, r, 9,  tot_rec, num_fmt=NUM_FMT, bg=COL_TOTAL_GRAY, bold=True)
+    _cel_dato(ws, r, 10, tot_ent, num_fmt=NUM_FMT, bg=COL_TOTAL_GRAY, bold=True)
+    _cel_dato(ws, r, 11, "", bg=COL_TOTAL_GRAY)
+    _cel_dato(ws, r, 12, "", bg=COL_TOTAL_GRAY)
+
+    ws.auto_filter.ref = f"A3:L{r-1}" if r > 4 else "A3:L3"
+    for i, w in enumerate([12,18,8,12,12,12,18,18,18,18,14,14], 1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+    ws.freeze_panes = "A4"
+    return ws
 
 
 def escribir_hoja_verificacion(wb, df_verif):
@@ -636,12 +837,14 @@ def _generar_xls_opciones(df_ok) -> BytesIO:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def generar_reporte(csv_file, especies_file=None, saldos_inicio_file=None,
-                    process_date: date = None, prices_file=None):
+                    process_date: date = None, prices_file=None,
+                    exercises_file=None):
     """
     csv_file          : table-currentActualPositions_*.csv (UploadedFile)
     especies_file     : ESPECIES.XLS (UploadedFile, opcional)
     saldos_inicio_file: saldos al inicio Nasdaq.csv (UploadedFile, opcional)
     prices_file       : table-prices_*.csv (UploadedFile, opcional) — cotizaciones MEP/CCL
+    exercises_file    : table-optionExercises_*.csv (UploadedFile, opcional)
     process_date      : date (default: hoy)
 
     Devuelve (BytesIO xlsx, BytesIO xls_opciones, dict resumen).
@@ -653,6 +856,11 @@ def generar_reporte(csv_file, especies_file=None, saldos_inicio_file=None,
     saldos_inicio = cargar_saldos_inicio(saldos_inicio_file)
     cotizaciones  = cargar_cotizaciones_bc(prices_file)
     df_ok, df_verif = cargar_y_clasificar(csv_file, process_date)
+
+    # Ejercicios de opciones (T+1 → liquidan hoy, van a CN/ARS)
+    df_ejerc_concat, df_ejerc_detalle = cargar_ejercicios_opciones(exercises_file, process_date)
+    if not df_ejerc_concat.empty:
+        df_ok = pd.concat([df_ok, df_ejerc_concat], ignore_index=True, sort=False)
 
     total_rows = len(df_ok) + len(df_verif)
     if total_rows == 0:
@@ -671,6 +879,7 @@ def generar_reporte(csv_file, especies_file=None, saldos_inicio_file=None,
         escribir_hoja_moneda(wb, sheet_name, df_ok, moneda, process_date,
                              saldo_inicio=saldos_inicio.get(moneda))
     escribir_hoja_movimientos(wb, df_ok, process_date, mapa_cvsa)
+    escribir_hoja_ejercicios(wb, df_ejerc_detalle, process_date)
     escribir_hoja_verificacion(wb, df_verif)
 
     xlsx_buf = BytesIO()
@@ -691,5 +900,7 @@ def generar_reporte(csv_file, especies_file=None, saldos_inicio_file=None,
         "cotiz_ccl":       cotizaciones.get("ccl"),
         "n_op":            int((df_ok["Concepto"] == "OP").sum()) if not df_ok.empty else 0,
         "verif_assets":    df_verif["Asset"].unique().tolist() if not df_verif.empty else [],
+        "n_ejercicios":    len(df_ejerc_detalle),
+        "importe_ejerc":   float(df_ejerc_detalle["Importe ARS"].sum()) if not df_ejerc_detalle.empty else 0.0,
     }
     return xlsx_buf, xls_buf, resumen
