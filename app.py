@@ -335,8 +335,7 @@ OP_SKILLS = [
     "Control Márgenes Gara BYMA",
     "Consolida SI2 para NASDAQ",
     "Arreglos Garantías",
-    "Control diario Op-SDIB",
-    "Collateral Position",
+    "Control diario OP-SDIB (MA)",
     "Risk Monitoring Client",
     "Control Aforos BYMA",
     "Conversión Dólares Renta",
@@ -349,6 +348,7 @@ SUSP_SKILLS = [
     "Risk Position",
     "Distribución Gara BYMA",
     "Genera TXT Gara NASDAQ",
+    "Collateral Position",
     "Settlement Position",
     "Settlement Instruction",
     "Settlement Obligation",
@@ -496,7 +496,7 @@ elif skill == "Control Márgenes Gara BYMA":
 elif skill == "Arreglos Garantías":
     from skills.arreglos_garantias.ui import render
     render()
-elif skill == "Control diario Op-SDIB":
+elif skill == "Control diario OP-SDIB (MA)":
     from skills.control_diario_op_sdib.ui import render
     render()
 elif skill == "Conversión Dólares Renta":
