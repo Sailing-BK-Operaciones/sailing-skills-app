@@ -1,24 +1,33 @@
 """
-Control diario Op-SDIB — versión web (Streamlit).
+Control diario OP-SDIB (MA) — versión web (Streamlit).
 Concilia operaciones PPT BYMA + SENEBI vs CONTBOLE (Gallo) del día.
+
+Outputs (10 hojas):
+  Control 999, Pesos ARS, Dolar MEP, USD Cable, Resumen Ope-Titulos,
+  Diferencias a Verificar, Operaciones, Cauciones, Trading Intraday, MAV.
+
 Recibe UploadedFiles; devuelve (BytesIO con el Excel, dict con resumen).
 """
 
 from io import BytesIO
-from datetime import datetime
+from datetime import datetime, date
 from collections import defaultdict, Counter
 import xlrd
 import openpyxl
-from openpyxl.styles import PatternFill, Font, Alignment
+from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
 TOL      = 0.02
+NUM_FMT  = "#,##0.00"
 C_GREEN  = "C6EFCE"
 C_RED    = "FFC7CE"
 C_YELLOW = "FFEB9C"
 C_BLUE   = "DDEEFF"
 C_HEADER = "4472C4"
 C_ORANGE = "FFE0B2"
+C_TITLE  = "1E3A5F"
+C_TOTAL  = "BFC2C9"
+C_HDR_GRAY = "D9D9D9"
 
 DNC_EXCEPTIONS = {
     "DNC5D": ("DNC5O", "DOLAR MEP"),
@@ -62,6 +71,20 @@ GALLO_MON = {
 GALLO_CAU_CAP = {"CCCD", "TCCD", "CTCD", "CCCP"}
 CTTES_CARTERA = {"1000", "1001", "1002", "1003"}
 
+MON_TO_CODE = {"Pesos": "ARS", "DOLAR MEP": "USD_MEP", "USD": "USD_CABLE"}
+MON_LABEL   = {"ARS": "Pesos ARS", "USD_MEP": "Dolar MEP", "USD_CABLE": "USD Cable"}
+MON_TITLE   = {"ARS": "PESOS (ARS)", "USD_MEP": "DOLAR MEP (USD)", "USD_CABLE": "USD CABLE (EXT)"}
+
+CONCEPTO_LABEL = {
+    "CI":  "CI - Contado Inmediato",
+    "CN":  "CN - Contado Normal",
+    "CAU": "CAU - Cauciones (apertura/capital)",
+    "TI":  "TI - Trading Intraday",
+    "MAV": "MAV - Operaciones MAV",
+}
+CONCEPTO_ORDER = {"CI": 0, "CN": 1, "CAU": 2, "TI": 3, "MAV": 4}
+SEGMENTO_ORDER = {"G": 0, "NG": 1}
+
 
 # ── Helpers de parseo ──────────────────────────────────────────────────────────
 
@@ -83,6 +106,7 @@ def _map_byma_esp(esp_raw, gallo_esp):
 
 
 def _merge_dicts(a, b):
+    """Suma dos dicts {key: [vn, imp]} por clave común."""
     result = defaultdict(lambda: [0., 0.])
     for k, v in a.items():
         result[k][0] += v[0]
@@ -93,8 +117,23 @@ def _merge_dicts(a, b):
     return dict(result)
 
 
+def _detect_process_date(dat_lines):
+    """Lee la trade date desde la primera línea de OPERSECEXT (campo [15])."""
+    for line in dat_lines:
+        p = line.split('"')
+        if len(p) >= 16:
+            try:
+                return datetime.strptime(p[15].strip(), "%Y%m%d").date()
+            except Exception:
+                continue
+    return date.today()
+
+
 def _parse_byma(lines, gallo_esp):
-    """Parsea OPERSECEXT_GARA.DAT (segmento garantizado PPT BYMA)."""
+    """Parsea OPERSECEXT_GARA.DAT (segmento garantizado PPT BYMA).
+    Keys: mer = (ctte, esp, mon, sen, concepto)   concepto in {CI, CN}
+          cau = (ctte, sen, mon)
+    """
     mer = defaultdict(lambda: [0., 0.])
     cau = defaultdict(lambda: [0., 0.])
     for line in lines:
@@ -117,24 +156,25 @@ def _parse_byma(lines, gallo_esp):
             cau[(ctte, sen, mon_cau)][1] += imp
         else:
             esp, mon = _map_byma_esp(p[7], gallo_esp)
-            mer[(ctte, esp, mon, sen)][0] += vn
-            mer[(ctte, esp, mon, sen)][1] += imp
+            plazo_code = p[9].strip()
+            concepto = "CI" if plazo_code == "0" else "CN"
+            mer[(ctte, esp, mon, sen, concepto)][0] += vn
+            mer[(ctte, esp, mon, sen, concepto)][1] += imp
     return dict(mer), dict(cau)
 
 
 def _parse_senebi(lines, gallo_esp):
-    """Parsea OPERBILEXT_GARA.DAT (segmento bilateral SENEBI).
-    Registra lado cliente e infiere posición de contraparte (sentido invertido).
-    """
+    """Parsea OPERBILEXT_GARA.DAT (SENEBI bilateral). Infiere contraparte."""
     snb = defaultdict(lambda: [0., 0.])
     for line in lines:
         p = line.split('"')
         if len(p) < 30:
             continue
-        sen_cli  = p[4].strip()
-        ctte_cli = p[7].strip()
-        esp_raw  = p[9].strip()
-        cparty   = p[29].strip()
+        sen_cli    = p[4].strip()
+        ctte_cli   = p[7].strip()
+        esp_raw    = p[9].strip()
+        plazo_code = p[10].strip()
+        cparty     = p[29].strip()
         try:
             vn  = float(p[13])
             imp = float(p[15])
@@ -143,16 +183,19 @@ def _parse_senebi(lines, gallo_esp):
         if sen_cli not in ("V", "C"):
             continue
         esp, mon = _map_byma_esp(esp_raw, gallo_esp)
-        snb[(ctte_cli, esp, mon, sen_cli)][0] += vn
-        snb[(ctte_cli, esp, mon, sen_cli)][1] += imp
+        concepto = "CI" if plazo_code == "0" else "CN"
+        snb[(ctte_cli, esp, mon, sen_cli, concepto)][0] += vn
+        snb[(ctte_cli, esp, mon, sen_cli, concepto)][1] += imp
         sen_cp = "V" if sen_cli == "C" else "C"
-        snb[(cparty, esp, mon, sen_cp)][0] += vn
-        snb[(cparty, esp, mon, sen_cp)][1] += imp
+        snb[(cparty, esp, mon, sen_cp, concepto)][0] += vn
+        snb[(cparty, esp, mon, sen_cp, concepto)][1] += imp
     return dict(snb)
 
 
 def _parse_gallo(file_bytes):
-    """Parsea CONTBOLE.XLS desde bytes."""
+    """Parsea CONTBOLE.XLS desde bytes. Devuelve (esp_set, mer, cau, tra, snb, mav, arancel_alerts).
+    Concepto CI/CN para PPT/SENEBI según Fec_Ope==Fec_Liq (CI) vs Fec_Liq>Fec_Ope (CN).
+    """
     wb = xlrd.open_workbook(file_contents=file_bytes)
     ws = wb.sheet_by_name("Control_de_Boletos")
     esp_set = set()
@@ -171,6 +214,8 @@ def _parse_gallo(file_bytes):
             ctte = str(int(float(raw)))
         except Exception:
             continue
+        fope = str(ws.cell_value(i, 2)).strip()
+        fliq = str(ws.cell_value(i, 3)).strip()
         esp     = str(ws.cell_value(i, 6)).strip()
         imp     = float(ws.cell_value(i, 7)) if ws.cell_value(i, 7) else 0.
         vn      = float(ws.cell_value(i, 8)) if ws.cell_value(i, 8) else 0.
@@ -178,6 +223,7 @@ def _parse_gallo(file_bytes):
         esp_set.add(esp)
         sen = GALLO_SEN.get(op)
         mon = GALLO_MON.get(op)
+        concepto_ppt = "CI" if fope and fliq and fope == fliq else "CN"
         if ctte in CTTES_CARTERA and abs(arancel) > 0.001:
             boleto = str(ws.cell_value(i, 0)).strip()
             arancel_alerts.append({
@@ -200,11 +246,11 @@ def _parse_gallo(file_bytes):
                         "vn": vn, "imp": imp})
         elif op in GALLO_SNB:
             if sen and mon:
-                snb[(ctte, esp, mon, sen)][0] += vn
-                snb[(ctte, esp, mon, sen)][1] += imp
+                snb[(ctte, esp, mon, sen, concepto_ppt)][0] += vn
+                snb[(ctte, esp, mon, sen, concepto_ppt)][1] += imp
         elif sen and mon:
-            mer[(ctte, esp, mon, sen)][0] += vn
-            mer[(ctte, esp, mon, sen)][1] += imp
+            mer[(ctte, esp, mon, sen, concepto_ppt)][0] += vn
+            mer[(ctte, esp, mon, sen, concepto_ppt)][1] += imp
     return esp_set, dict(mer), dict(cau), dict(tra), dict(snb), mav, arancel_alerts
 
 
@@ -217,17 +263,19 @@ def _get_st(in_b, in_g, difs):
 
 
 def _compare_ops(b, g, ppt_keys_b, ppt_keys_g, snb_keys_b, snb_keys_g):
+    """Clave: (ctte, esp, mon, sen, concepto). Columnas SEGMENTO y VERIFICAR."""
     rows = []
     for k in sorted(set(b) | set(g)):
-        ctte, esp, mon, sen = k
+        ctte, esp, mon, sen, concepto = k
         bv = b.get(k, [0., 0.])
         gv = g.get(k, [0., 0.])
         dv = bv[0] - gv[0]
         di = bv[1] - gv[1]
         in_ppt = k in ppt_keys_b or k in ppt_keys_g
         in_snb = k in snb_keys_b or k in snb_keys_g
-        seg = ("PPT+SENEBI" if in_ppt and in_snb
-               else ("PPT" if in_ppt else "SENEBI"))
+        seg_mer  = ("PPT+SENEBI" if in_ppt and in_snb
+                    else ("PPT" if in_ppt else "SENEBI"))
+        segmento = "G" if in_ppt else "NG"
         estado = _get_st(k in b, k in g, [dv, di])
         verificar = ""
         if ctte == "1002":
@@ -238,7 +286,7 @@ def _compare_ops(b, g, ppt_keys_b, ppt_keys_g, snb_keys_b, snb_keys_g):
             verificar = "VERIFICAR"
         rows.append({
             "ctte": ctte, "especie": esp, "moneda": mon, "sentido": sen,
-            "segmento": seg,
+            "concepto": concepto, "segmento_mer": seg_mer, "segmento": segmento,
             "vn_b": bv[0], "vn_g": gv[0], "dif_vn": dv,
             "imp_b": bv[1], "imp_g": gv[1], "dif_imp": di,
             "estado": estado, "verificar": verificar,
@@ -248,7 +296,7 @@ def _compare_ops(b, g, ppt_keys_b, ppt_keys_g, snb_keys_b, snb_keys_g):
 
 def _second_pass_ticker(rows):
     """Re-empareja SOLO BYMA vs SOLO GALLO donde el ticker difiere solo en el
-    último carácter (convención de moneda O/D/C). Mismo ctte, sentido, VN e IMP."""
+    último carácter (convención de moneda O/D/C). Mismo ctte, sentido, concepto, VN, IMP."""
     solo_b = [(i, r) for i, r in enumerate(rows) if r["estado"] == "SOLO BYMA"]
     solo_g = [(i, r) for i, r in enumerate(rows) if r["estado"] == "SOLO GALLO"]
     absorbed_g = set()
@@ -262,19 +310,20 @@ def _second_pass_ticker(rows):
             esp_g = rg["especie"]
             if len(esp_g) <= 1:
                 continue
-            if (rb["ctte"]    == rg["ctte"] and
-                rb["sentido"] == rg["sentido"] and
-                esp_b[:-1]    == esp_g[:-1] and
-                esp_b         != esp_g and
+            if (rb["ctte"]     == rg["ctte"] and
+                rb["sentido"]  == rg["sentido"] and
+                rb["concepto"] == rg["concepto"] and
+                esp_b[:-1]     == esp_g[:-1] and
+                esp_b          != esp_g and
                 abs(rb["vn_b"]  - rg["vn_g"])  <= TOL and
                 abs(rb["imp_b"] - rg["imp_g"]) <= TOL):
-                rows[ib]["vn_g"]    = rg["vn_g"]
-                rows[ib]["imp_g"]   = rg["imp_g"]
-                rows[ib]["dif_vn"]  = rb["vn_b"] - rg["vn_g"]
-                rows[ib]["dif_imp"] = rb["imp_b"] - rg["imp_g"]
-                rows[ib]["especie"] = rg["especie"]
-                rows[ib]["moneda"]  = rg["moneda"]
-                rows[ib]["estado"]  = "OK"
+                rows[ib]["vn_g"]      = rg["vn_g"]
+                rows[ib]["imp_g"]     = rg["imp_g"]
+                rows[ib]["dif_vn"]    = rb["vn_b"]  - rg["vn_g"]
+                rows[ib]["dif_imp"]   = rb["imp_b"] - rg["imp_g"]
+                rows[ib]["especie"]   = rg["especie"]
+                rows[ib]["moneda"]    = rg["moneda"]
+                rows[ib]["estado"]    = "OK"
                 rows[ib]["verificar"] = ""
                 absorbed_g.add(ig)
                 break
@@ -313,18 +362,21 @@ def _compare_tra(g):
 
 
 def _analyze_1002(ops_rows):
-    rows_1002 = {(r["especie"], r["moneda"], r["sentido"]): r
+    """Para cada (esp, mon, sen, concepto) con CTA 1002 verifica si la dif
+    está compensada por otros comitentes. Suma neto debería ser 0."""
+    rows_1002 = {(r["especie"], r["moneda"], r["sentido"], r["concepto"]): r
                  for r in ops_rows if r["ctte"] == "1002"}
     results = []
     for k, r1002 in rows_1002.items():
-        esp, mon, sen = k
+        esp, mon, sen, concepto = k
         dif_1002 = r1002["dif_vn"]
         otros = [(r["ctte"], r["dif_vn"])
                  for r in ops_rows
                  if r["ctte"] != "1002"
-                 and r["especie"] == esp
-                 and r["moneda"] == mon
-                 and r["sentido"] == sen
+                 and r["especie"]  == esp
+                 and r["moneda"]   == mon
+                 and r["sentido"]  == sen
+                 and r["concepto"] == concepto
                  and abs(r["dif_vn"]) > TOL]
         dif_otros = sum(v for _, v in otros)
         neto = dif_1002 + dif_otros
@@ -332,6 +384,7 @@ def _analyze_1002(ops_rows):
             "especie":     esp,
             "moneda":      mon,
             "sentido":     sen,
+            "concepto":    concepto,
             "estado_1002": r1002["estado"],
             "vn_b_1002":   r1002["vn_b"],
             "vn_g_1002":   r1002["vn_g"],
@@ -348,11 +401,12 @@ def _apply_1002_compensation(ops_rows, analisis_1002):
     for a in analisis_1002:
         if a["balance"] != "OK":
             continue
-        esp, mon, sen = a["especie"], a["moneda"], a["sentido"]
+        esp, mon, sen, concepto = a["especie"], a["moneda"], a["sentido"], a["concepto"]
         otros_set = {c.strip() for c in a["otros_cttes"].split(",")
                      if c.strip() and c.strip() != "-"}
         for r in ops_rows:
-            if r["especie"] != esp or r["moneda"] != mon or r["sentido"] != sen:
+            if (r["especie"]  != esp or r["moneda"]   != mon
+                or r["sentido"]  != sen or r["concepto"] != concepto):
                 continue
             if r["estado"] == "OK":
                 continue
@@ -362,12 +416,155 @@ def _apply_1002_compensation(ops_rows, analisis_1002):
     return ops_rows
 
 
+# ── Agregados por moneda ───────────────────────────────────────────────────────
+
+def _ar_ae(sen, imp):
+    """PPT/SENEBI: Venta -> A Recibir cash, Compra -> A Entregar cash."""
+    if sen == "V": return imp, 0.0
+    if sen == "C": return 0.0, imp
+    return 0.0, 0.0
+
+
+def _ar_ae_cau(sen, cap):
+    """Caución apertura: Tomadora (C) recibe capital; Colocadora (V) entrega capital."""
+    if sen == "C": return cap, 0.0
+    if sen == "V": return 0.0, cap
+    return 0.0, 0.0
+
+
+def _build_currency_agg(mer_b, snb_b, cau_b, mer_g, snb_g, cau_g, tra_g, mav_g):
+    """{moneda_code: {(concepto, segmento): {'ar_b','ae_b','ar_g','ae_g','imp_b','imp_g'}}}.
+    Ops BYMA con contraparte TI en Gallo -> bucket TI también del lado BYMA.
+    """
+    agg = {m: defaultdict(lambda: {"ar_b": 0., "ae_b": 0., "ar_g": 0., "ae_g": 0.,
+                                    "imp_b": 0., "imp_g": 0.})
+           for m in ("ARS", "USD_MEP", "USD_CABLE")}
+
+    tra_keys = set(tra_g.keys())
+
+    def _add(side, mon_internal, concepto, segmento, sen, imp):
+        code = MON_TO_CODE.get(mon_internal)
+        if not code or code not in agg:
+            return
+        ar, ae = _ar_ae(sen, imp)
+        cell = agg[code][(concepto, segmento)]
+        if side == "B":
+            cell["ar_b"] += ar; cell["ae_b"] += ae; cell["imp_b"] += imp
+        else:
+            cell["ar_g"] += ar; cell["ae_g"] += ae; cell["imp_g"] += imp
+
+    def _add_cau(side, mon_internal, sen, cap):
+        code = MON_TO_CODE.get(mon_internal)
+        if not code:
+            return
+        ar, ae = _ar_ae_cau(sen, cap)
+        cell = agg[code][("CAU", "G")]
+        if side == "B":
+            cell["ar_b"] += ar; cell["ae_b"] += ae; cell["imp_b"] += cap
+        else:
+            cell["ar_g"] += ar; cell["ae_g"] += ae; cell["imp_g"] += cap
+
+    for k, v in mer_b.items():
+        ctte, esp, mon, sen, concepto = k
+        if (ctte, esp, mon, sen) in tra_keys:
+            _add("B", mon, "TI", "G", sen, v[1])
+        else:
+            _add("B", mon, concepto, "G", sen, v[1])
+    for k, v in mer_g.items():
+        ctte, esp, mon, sen, concepto = k
+        _add("G", mon, concepto, "G", sen, v[1])
+
+    for k, v in snb_b.items():
+        ctte, esp, mon, sen, concepto = k
+        _add("B", mon, concepto, "NG", sen, v[1])
+    for k, v in snb_g.items():
+        ctte, esp, mon, sen, concepto = k
+        _add("G", mon, concepto, "NG", sen, v[1])
+
+    for k, v in cau_b.items():
+        ctte, sen, mon_cau = k
+        _add_cau("B", mon_cau, sen, v[0])
+    for k, v in cau_g.items():
+        ctte, sen, mon_cau = k
+        _add_cau("G", mon_cau, sen, v["capital"])
+
+    for k, v in tra_g.items():
+        ctte, esp, mon, sen = k
+        code = MON_TO_CODE.get(mon)
+        if not code:
+            continue
+        ar, ae = _ar_ae(sen, v[1])
+        cell = agg[code][("TI", "G")]
+        cell["ar_g"] += ar; cell["ae_g"] += ae; cell["imp_g"] += v[1]
+
+    for r in mav_g:
+        code = MON_TO_CODE.get(r["mon"])
+        if not code:
+            continue
+        ar, ae = _ar_ae(r["sen"], r["imp"])
+        cell = agg[code][("MAV", "NG")]
+        cell["ar_g"] += ar; cell["ae_g"] += ae; cell["imp_g"] += r["imp"]
+
+    return agg
+
+
+# ── Actual Position: saldo proyectado por moneda ───────────────────────────────
+
+def _cargar_saldos_actual_position_file(ap_file):
+    """Lee un Actual Position xlsx (UploadedFile) y extrae 'Saldo proyectado del dia'
+    (col G) y datos auxiliares (col J/K) por moneda.
+    Retorna (dict_saldos, dict_extras, filename) o ({}, {}, '')."""
+    if ap_file is None:
+        return {}, {}, ""
+    try:
+        ap_file.seek(0)
+        wb = openpyxl.load_workbook(BytesIO(ap_file.read()), data_only=True)
+    except Exception:
+        return {}, {}, ""
+    sheet_map = [
+        ("ARS",       ("Pesos ARS",)),
+        ("USD_MEP",   ("Dólar MEP", "Dolar MEP", "Dolar MEP (USD)")),
+        ("USD_CABLE", ("USD Cable",)),
+    ]
+    saldos = {}
+    extras = {}
+    for code, candidates in sheet_map:
+        sname = next((c for c in candidates if c in wb.sheetnames), None)
+        if not sname:
+            continue
+        ws = wb[sname]
+        for r in range(1, ws.max_row + 1):
+            label = ws.cell(r, 1).value
+            if not label:
+                continue
+            label_str = str(label).lower()
+            if "saldo proyectado" in label_str:
+                val = ws.cell(r, 7).value
+                if isinstance(val, (int, float)):
+                    saldos[code] = val
+                aux_val_j = ws.cell(r, 9).value  if ws.max_column >= 9  else None
+                aux_lbl_j = ws.cell(r, 10).value if ws.max_column >= 10 else None
+                if isinstance(aux_val_j, (int, float)) and isinstance(aux_lbl_j, str) \
+                        and "999" in aux_lbl_j.lower():
+                    extras.setdefault(code, {})["saldo_999"] = aux_val_j
+            if "saldo al inicio" in label_str:
+                aux_val_j = ws.cell(r, 9).value  if ws.max_column >= 9  else None
+                aux_lbl_j = ws.cell(r, 10).value if ws.max_column >= 10 else None
+                if isinstance(aux_val_j, (int, float)) and isinstance(aux_lbl_j, str) \
+                        and "pendiente" in aux_lbl_j.lower():
+                    extras.setdefault(code, {})["pendiente"] = aux_val_j
+    return saldos, extras, getattr(ap_file, "name", "Actual Position.xlsx")
+
+
 # ── Helpers Excel ──────────────────────────────────────────────────────────────
 
 def _fl(c):  return PatternFill("solid", fgColor=c)
 def _hf():   return Font(bold=True, color="FFFFFF")
 def _bf():   return Font(bold=True)
 
+def _border():
+    s = Side(style="thin")
+    return Border(left=s, right=s, top=s, bottom=s)
 
 def _wh(ws, hdrs, row=1):
     for c, h in enumerate(hdrs, 1):
@@ -376,23 +573,19 @@ def _wh(ws, hdrs, row=1):
         cell.fill = _fl(C_HEADER)
         cell.alignment = Alignment(horizontal="center")
 
-
 def _nf(ws, r, c, v):
     cell = ws.cell(row=r, column=c, value=v)
-    cell.number_format = "#,##0.00"
+    cell.number_format = NUM_FMT
     return cell
-
 
 def _rf(ws, r, n, color):
     for c in range(1, n + 1):
         ws.cell(r, c).fill = _fl(color)
 
-
 def _af(ws):
     for col in ws.columns:
         w = max((len(str(c.value or "")) for c in col), default=8)
         ws.column_dimensions[get_column_letter(col[0].column)].width = min(w + 2, 42)
-
 
 def _st_color(estado):
     return {"OK": C_GREEN, "DIFERENCIA": C_RED,
@@ -400,10 +593,356 @@ def _st_color(estado):
             "TRADING INTRADAY": C_ORANGE}.get(estado, "FFFFFF")
 
 
-# ── Escritura de hojas ─────────────────────────────────────────────────────────
+# ── Hoja Control 999 ───────────────────────────────────────────────────────────
+
+def _write_control_999(wb, agg, ap_saldos, ap_extras, ap_filename, process_date):
+    ws = wb.create_sheet("Control 999")
+    ws.sheet_view.showGridLines = False
+    fecha = process_date.strftime('%d/%m/%Y')
+
+    ws.merge_cells("A1:E1")
+    c = ws["A1"]
+    c.value = f"CONTROL 999 - SALDO PROYECTADO A FIN DEL DIA - {fecha}"
+    c.font = Font(bold=True, size=13, color="FFFFFF")
+    c.fill = _fl(C_TITLE)
+    c.alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[1].height = 28
+
+    ws.merge_cells("A2:E2")
+    src = ap_filename or "(Actual Position no subido)"
+    c2 = ws.cell(row=2, column=1,
+                 value=f"Saldo inicio leido de: {src}  |  "
+                       f"Movimientos del dia desde OPERSECEXT/OPERBILEXT y CONTBOLE")
+    c2.font = Font(italic=True, size=9, color="595959")
+
+    r = 4
+    for code in ("ARS", "USD_MEP", "USD_CABLE"):
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=5)
+        c = ws.cell(row=r, column=1, value=MON_TITLE[code])
+        c.font = Font(bold=True, size=12, color="FFFFFF")
+        c.fill = _fl(C_TITLE)
+        c.alignment = Alignment(horizontal="center", vertical="center")
+        ws.row_dimensions[r].height = 22
+        r += 1
+
+        for i, h in enumerate(["Concepto", "BYMA", "Gallo", "Diferencia", "Notas"], 1):
+            cell = ws.cell(row=r, column=i, value=h)
+            cell.fill = _fl(C_HEADER)
+            cell.font = _hf()
+            cell.alignment = Alignment(horizontal="center")
+            cell.border = _border()
+        r += 1
+
+        saldo_inicio = ap_saldos.get(code)
+        ws.cell(row=r, column=1,
+                value="SALDO ACTUAL POSITION (proyectado del dia)").font = _bf()
+        if saldo_inicio is not None:
+            _nf(ws, r, 2, saldo_inicio).font = _bf()
+            _nf(ws, r, 3, saldo_inicio).font = _bf()
+            _nf(ws, r, 4, 0.0).font = _bf()
+        else:
+            ws.cell(row=r, column=2, value="N/D").alignment = Alignment(horizontal="right")
+            ws.cell(row=r, column=3, value="N/D").alignment = Alignment(horizontal="right")
+        extras_code = ap_extras.get(code, {})
+        nota_inicio = []
+        if "saldo_999" in extras_code:
+            nota_inicio.append(f"999 dia previo: {extras_code['saldo_999']:,.2f}")
+        if "pendiente" in extras_code:
+            nota_inicio.append(f"pend. liquidar: {extras_code['pendiente']:,.2f}")
+        if nota_inicio:
+            ws.cell(row=r, column=5, value=" | ".join(nota_inicio)).font = \
+                Font(italic=True, size=9, color="595959")
+        for col in range(1, 6):
+            ws.cell(row=r, column=col).border = _border()
+            ws.cell(row=r, column=col).fill = _fl(C_HDR_GRAY)
+        r += 1
+
+        movs_byma_tot = 0.0
+        movs_gallo_tot = 0.0
+        keys_sorted = sorted(agg[code].keys(),
+                             key=lambda x: (CONCEPTO_ORDER.get(x[0], 99),
+                                            SEGMENTO_ORDER.get(x[1], 99)))
+        for (concepto, segmento) in keys_sorted:
+            d = agg[code][(concepto, segmento)]
+            neto_b = d["ar_b"] - d["ae_b"]
+            neto_g = d["ar_g"] - d["ae_g"]
+            if abs(neto_b) + abs(neto_g) <= TOL:
+                continue
+            dif = neto_b - neto_g
+
+            label = f"  {CONCEPTO_LABEL.get(concepto, concepto)} ({segmento})"
+            ws.cell(row=r, column=1, value=label)
+            _nf(ws, r, 2, neto_b)
+            _nf(ws, r, 3, neto_g)
+            _nf(ws, r, 4, dif)
+            nota = {
+                "CI":  "liquida hoy (T+0)",
+                "CN":  "liquida manana (T+1)",
+                "CAU": "apertura - capital hoy",
+                "TI":  "trading intraday",
+                "MAV": "MAV - informacional",
+            }.get(concepto, "")
+            ws.cell(row=r, column=5, value=nota).font = \
+                Font(italic=True, size=9, color="595959")
+            for col in range(1, 6):
+                ws.cell(row=r, column=col).border = _border()
+            if abs(dif) > TOL:
+                ws.cell(row=r, column=4).fill = _fl(C_RED)
+                ws.cell(row=r, column=4).font = _bf()
+            movs_byma_tot  += neto_b
+            movs_gallo_tot += neto_g
+            r += 1
+
+        ws.cell(row=r, column=1, value="TOTAL MOVIMIENTOS DIA").font = _bf()
+        _nf(ws, r, 2, movs_byma_tot).font = _bf()
+        _nf(ws, r, 3, movs_gallo_tot).font = _bf()
+        _nf(ws, r, 4, movs_byma_tot - movs_gallo_tot).font = _bf()
+        for col in range(1, 6):
+            ws.cell(row=r, column=col).fill = _fl(C_TOTAL)
+            ws.cell(row=r, column=col).border = _border()
+        if abs(movs_byma_tot - movs_gallo_tot) > TOL:
+            ws.cell(row=r, column=4).fill = _fl(C_RED)
+            ws.cell(row=r, column=4).font = Font(bold=True, color="FFFFFF")
+        r += 1
+
+        if saldo_inicio is not None:
+            saldo_final_b = saldo_inicio + movs_byma_tot
+            saldo_final_g = saldo_inicio + movs_gallo_tot
+            dif_final = saldo_final_b - saldo_final_g
+            ws.cell(row=r, column=1, value="SALDO FINAL PROYECTADO").font = \
+                Font(bold=True, color="FFFFFF")
+            _nf(ws, r, 2, saldo_final_b).font = Font(bold=True, color="FFFFFF")
+            _nf(ws, r, 3, saldo_final_g).font = Font(bold=True, color="FFFFFF")
+            _nf(ws, r, 4, dif_final).font = Font(bold=True, color="FFFFFF")
+            for col in range(1, 6):
+                ws.cell(row=r, column=col).fill = _fl(C_TITLE)
+                ws.cell(row=r, column=col).border = _border()
+            r += 1
+        else:
+            ws.cell(row=r, column=1,
+                    value="SALDO FINAL = N/D (sin Actual Position de base)").font = \
+                Font(italic=True, color="C00000")
+            for col in range(1, 6):
+                ws.cell(row=r, column=col).fill = _fl(C_YELLOW)
+                ws.cell(row=r, column=col).border = _border()
+            r += 1
+
+        r += 2
+
+    for i, w in enumerate([44, 22, 22, 20, 32], 1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+    ws.freeze_panes = "A4"
+    return ws
+
+
+# ── Hojas por moneda ───────────────────────────────────────────────────────────
+
+def _write_currency_sheet(wb, code, agg_code, process_date):
+    title_label = MON_LABEL[code]
+    ws = wb.create_sheet(title_label)
+    ws.sheet_view.showGridLines = False
+    fecha_str = process_date.strftime("%d/%m/%Y")
+
+    ws.merge_cells("A1:J1")
+    c = ws["A1"]
+    c.value = f"VALORIZACION OPERACIONES {MON_TITLE[code]} - {fecha_str}"
+    c.font = Font(bold=True, size=13, color="FFFFFF")
+    c.fill = _fl(C_TITLE)
+    c.alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[1].height = 28
+
+    ws.merge_cells("A2:J2")
+    c2 = ws.cell(row=2, column=1,
+                 value="A Recibir = ventas (PPT/SENEBI) + cauciones tomadoras (apertura). "
+                       "A Entregar = compras + cauciones colocadoras. "
+                       "Cauciones valorizadas por capital (apertura).")
+    c2.font = Font(italic=True, size=9, color="595959")
+
+    headers = ["Concepto", "Segmento",
+               "A Recibir BYMA", "A Entregar BYMA", "Neto BYMA",
+               "A Recibir Gallo", "A Entregar Gallo", "Neto Gallo",
+               "Dif Neto", "Estado"]
+    r = 4
+    for i, h in enumerate(headers, 1):
+        cell = ws.cell(row=r, column=i, value=h)
+        cell.fill = _fl(C_HEADER); cell.font = _hf()
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = _border()
+    ws.row_dimensions[r].height = 30
+
+    keys = sorted(agg_code.keys(),
+                  key=lambda x: (CONCEPTO_ORDER.get(x[0], 99),
+                                 SEGMENTO_ORDER.get(x[1], 99)))
+
+    tot_ar_b = tot_ae_b = tot_ar_g = tot_ae_g = 0.0
+    r = 5
+    for (concepto, segmento) in keys:
+        d = agg_code[(concepto, segmento)]
+        ar_b, ae_b = d["ar_b"], d["ae_b"]
+        ar_g, ae_g = d["ar_g"], d["ae_g"]
+        neto_b = ar_b - ae_b
+        neto_g = ar_g - ae_g
+        dif = neto_b - neto_g
+        if abs(ar_b) + abs(ae_b) + abs(ar_g) + abs(ae_g) <= TOL:
+            continue
+        movs_ok = (abs(ar_b - ar_g) <= TOL) and (abs(ae_b - ae_g) <= TOL)
+        estado = "OK" if (abs(dif) <= TOL and movs_ok) else "DIFERENCIA"
+        co = C_GREEN if estado == "OK" else C_RED
+
+        ws.cell(row=r, column=1, value=CONCEPTO_LABEL.get(concepto, concepto)).alignment = \
+            Alignment(horizontal="left", vertical="center")
+        ws.cell(row=r, column=2, value=segmento).alignment = \
+            Alignment(horizontal="center", vertical="center")
+        _nf(ws, r, 3, ar_b)
+        _nf(ws, r, 4, ae_b)
+        _nf(ws, r, 5, neto_b).font = _bf()
+        _nf(ws, r, 6, ar_g)
+        _nf(ws, r, 7, ae_g)
+        _nf(ws, r, 8, neto_g).font = _bf()
+        cell_dif = _nf(ws, r, 9, dif); cell_dif.font = _bf()
+        cell_est = ws.cell(row=r, column=10, value=estado)
+        cell_est.fill = _fl(co)
+        cell_est.alignment = Alignment(horizontal="center")
+        for col in range(1, 11):
+            ws.cell(row=r, column=col).border = _border()
+        tot_ar_b += ar_b; tot_ae_b += ae_b
+        tot_ar_g += ar_g; tot_ae_g += ae_g
+        r += 1
+
+    neto_b_tot = tot_ar_b - tot_ae_b
+    neto_g_tot = tot_ar_g - tot_ae_g
+    dif_tot = neto_b_tot - neto_g_tot
+    est_tot = "OK" if abs(dif_tot) <= TOL else "DIFERENCIA"
+    co_tot = C_GREEN if est_tot == "OK" else C_RED
+
+    ws.cell(row=r, column=1, value="TOTAL").font = _bf()
+    ws.cell(row=r, column=2, value="").alignment = Alignment(horizontal="center")
+    for col, val in [(3, tot_ar_b), (4, tot_ae_b), (5, neto_b_tot),
+                     (6, tot_ar_g), (7, tot_ae_g), (8, neto_g_tot), (9, dif_tot)]:
+        cell = _nf(ws, r, col, val); cell.font = _bf(); cell.fill = _fl(C_TOTAL)
+    ws.cell(row=r, column=1).fill = _fl(C_TOTAL)
+    ws.cell(row=r, column=2).fill = _fl(C_TOTAL)
+    cell_est_tot = ws.cell(row=r, column=10, value=est_tot)
+    cell_est_tot.fill = _fl(co_tot); cell_est_tot.font = _bf()
+    cell_est_tot.alignment = Alignment(horizontal="center")
+    for col in range(1, 11):
+        ws.cell(row=r, column=col).border = _border()
+
+    for i, w in enumerate([34, 12, 18, 18, 18, 18, 18, 18, 18, 14], 1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+    ws.freeze_panes = "A5"
+    return ws
+
+
+# ── Hoja Diferencias a Verificar ───────────────────────────────────────────────
+
+def _build_verification_rows(ops_rows, cau_rows):
+    out = []
+    for r in ops_rows:
+        if r["estado"] == "OK" and not r["verificar"]:
+            continue
+        if r["estado"] == "TRADING INTRADAY":
+            continue
+        out.append({
+            "ctte": r["ctte"], "especie": r["especie"], "moneda": r["moneda"],
+            "sentido": r["sentido"], "concepto": r["concepto"], "segmento": r["segmento"],
+            "imp_b": r["imp_b"], "imp_g": r["imp_g"], "dif_imp": r["dif_imp"],
+            "estado": r["estado"], "verificar": r["verificar"], "origen": "OPERACION",
+        })
+    for r in cau_rows:
+        if r["estado"] == "OK":
+            continue
+        out.append({
+            "ctte": r["ctte"], "especie": "(CAUCION)", "moneda": r["moneda"],
+            "sentido": r["sentido"], "concepto": "CAU", "segmento": "G",
+            "imp_b": r["imp_b"], "imp_g": r["tot_g"], "dif_imp": r["dif_tot"],
+            "estado": r["estado"],
+            "verificar": "CTA 1002" if r["ctte"] == "1002" else "VERIFICAR",
+            "origen": "CAUCION",
+        })
+    estado_order = {"DIFERENCIA": 0, "SOLO BYMA": 1, "SOLO GALLO": 2, "OK": 3}
+    out.sort(key=lambda x: (estado_order.get(x["estado"], 9), x["moneda"], x["ctte"]))
+    return out
+
+
+def _write_verification_sheet(wb, ver_rows, process_date):
+    ws = wb.create_sheet("Diferencias a Verificar")
+    ws.sheet_view.showGridLines = False
+
+    ws.merge_cells("A1:L1")
+    c = ws["A1"]
+    c.value = (f"DIFERENCIAS A VERIFICAR - {process_date.strftime('%d/%m/%Y')} - "
+               f"{len(ver_rows)} fila(s)")
+    c.font = Font(bold=True, size=13, color="FFFFFF")
+    c.fill = _fl(C_TITLE)
+    c.alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[1].height = 28
+
+    ws.merge_cells("A2:L2")
+    c2 = ws.cell(row=2, column=1,
+                 value="Operaciones valorizadas con discrepancia BYMA vs Gallo. "
+                       "AutoFilter activo. Focos: FALTA BOLETO | CTA 1002.")
+    c2.font = Font(italic=True, size=9, color="595959")
+
+    headers = ["CTTE", "ESPECIE", "MONEDA", "SENTIDO", "CONCEPTO", "SEGMENTO",
+               "ORIGEN", "IMPORTE BYMA", "IMPORTE GALLO", "DIFERENCIA",
+               "ESTADO", "VERIFICAR"]
+    r = 3
+    for i, h in enumerate(headers, 1):
+        cell = ws.cell(row=r, column=i, value=h)
+        cell.fill = _fl(C_HEADER); cell.font = _hf()
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.border = _border()
+    ws.row_dimensions[r].height = 24
+
+    widths = [10, 14, 14, 10, 12, 12, 12, 18, 18, 16, 14, 18]
+    if not ver_rows:
+        ws.cell(row=4, column=1,
+                value="Sin diferencias por verificar. Conciliacion OK.").font = \
+            Font(italic=True, color="006100")
+        for i, w in enumerate(widths, 1):
+            ws.column_dimensions[get_column_letter(i)].width = w
+        ws.freeze_panes = "A4"
+        ws.auto_filter.ref = "A3:L3"
+        return ws
+
+    r = 4
+    for row in ver_rows:
+        co = _st_color(row["estado"])
+        ws.cell(row=r, column=1, value=row["ctte"])
+        ws.cell(row=r, column=2, value=row["especie"])
+        ws.cell(row=r, column=3, value=row["moneda"])
+        ws.cell(row=r, column=4, value=row["sentido"])
+        ws.cell(row=r, column=5, value=row["concepto"])
+        ws.cell(row=r, column=6, value=row["segmento"])
+        ws.cell(row=r, column=7, value=row["origen"])
+        _nf(ws, r, 8, row["imp_b"])
+        _nf(ws, r, 9, row["imp_g"])
+        _nf(ws, r, 10, row["dif_imp"])
+        ws.cell(row=r, column=11, value=row["estado"]).fill = _fl(co)
+        ver_cell = ws.cell(row=r, column=12, value=row["verificar"])
+        if row["verificar"] == "FALTA BOLETO":
+            ver_cell.fill = _fl(C_RED)
+            ver_cell.font = Font(bold=True, color="FFFFFF")
+        elif row["verificar"] == "CTA 1002":
+            ver_cell.fill = _fl(C_ORANGE); ver_cell.font = _bf()
+        elif row["verificar"] == "VERIFICAR":
+            ver_cell.fill = _fl(C_YELLOW)
+        for col in range(1, 13):
+            ws.cell(row=r, column=col).border = _border()
+        r += 1
+
+    ws.auto_filter.ref = f"A3:L{r-1}"
+    for i, w in enumerate(widths, 1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+    ws.freeze_panes = "A4"
+    return ws
+
+
+# ── Hojas detalle ──────────────────────────────────────────────────────────────
 
 def _write_ops_sheet(ws, rows):
-    _wh(ws, ["CTTE", "ESPECIE", "MONEDA", "SENTIDO", "SEGMENTO",
+    _wh(ws, ["CTTE", "ESPECIE", "MONEDA", "SENTIDO", "CONCEPTO", "SEGMENTO",
              "VN BYMA", "VN GALLO", "DIF VN",
              "IMP BYMA", "IMP GALLO", "DIF IMP", "ESTADO", "VERIFICAR"])
     for i, r in enumerate(rows, 2):
@@ -412,17 +951,18 @@ def _write_ops_sheet(ws, rows):
         ws.cell(i,  2, r["especie"])
         ws.cell(i,  3, r["moneda"])
         ws.cell(i,  4, r["sentido"])
-        ws.cell(i,  5, r["segmento"])
-        _nf(ws, i,  6, r["vn_b"])
-        _nf(ws, i,  7, r["vn_g"])
-        _nf(ws, i,  8, r["dif_vn"])
-        _nf(ws, i,  9, r["imp_b"])
-        _nf(ws, i, 10, r["imp_g"])
-        _nf(ws, i, 11, r["dif_imp"])
-        ws.cell(i, 12, r["estado"])
-        ws.cell(i, 13, r["verificar"])
-        _rf(ws, i, 13, co)
-    ws.auto_filter.ref = f"A1:M{len(rows)+1}"
+        ws.cell(i,  5, r["concepto"])
+        ws.cell(i,  6, r["segmento_mer"])
+        _nf(ws, i,  7, r["vn_b"])
+        _nf(ws, i,  8, r["vn_g"])
+        _nf(ws, i,  9, r["dif_vn"])
+        _nf(ws, i, 10, r["imp_b"])
+        _nf(ws, i, 11, r["imp_g"])
+        _nf(ws, i, 12, r["dif_imp"])
+        ws.cell(i, 13, r["estado"])
+        ws.cell(i, 14, r["verificar"])
+        _rf(ws, i, 14, co)
+    ws.auto_filter.ref = f"A1:N{len(rows)+1}"
     _af(ws)
 
 
@@ -485,7 +1025,9 @@ def _write_mav_sheet(ws, mav_rows):
     _af(ws)
 
 
-def _write_res(ws, ops_rows, cr, tr, mav_rows, analisis_1002, arancel_alerts=None):
+# ── Hoja Resumen Ope-Titulos ───────────────────────────────────────────────────
+
+def _write_res(ws, ops_rows, cr, tr, mav_rows, analisis_1002, arancel_alerts, process_date):
     ws.column_dimensions["A"].width = 24
     ws.column_dimensions["B"].width = 12
     for col in "CDEFGHIJK":
@@ -494,7 +1036,7 @@ def _write_res(ws, ops_rows, cr, tr, mav_rows, analisis_1002, arancel_alerts=Non
     row = 1
     ws.cell(row, 1, "RESUMEN CONCILIACION").font = _bf()
     row += 1
-    ws.cell(row, 1, f"Fecha: {datetime.today().strftime('%d/%m/%Y')}")
+    ws.cell(row, 1, f"Fecha: {process_date.strftime('%d/%m/%Y')}")
     row += 2
 
     est_std = [("OK", C_GREEN), ("DIFERENCIA", C_RED),
@@ -562,8 +1104,7 @@ def _write_res(ws, ops_rows, cr, tr, mav_rows, analisis_1002, arancel_alerts=Non
     if arancel_alerts:
         for c, h in enumerate(["Boleto", "CTTE", "Operacion", "Especie", "Arancel"], 1):
             cell = ws.cell(row, c, h)
-            cell.font = Font(bold=True)
-            cell.fill = _fl("D9D9D9")
+            cell.font = Font(bold=True); cell.fill = _fl("D9D9D9")
         row += 1
         for a in arancel_alerts:
             ws.cell(row, 1, a["boleto"])
@@ -571,9 +1112,8 @@ def _write_res(ws, ops_rows, cr, tr, mav_rows, analisis_1002, arancel_alerts=Non
             ws.cell(row, 3, a["op"])
             ws.cell(row, 4, a["esp"])
             cell_ar = ws.cell(row, 5, a["arancel"])
-            cell_ar.number_format = "#,##0.00"
-            cell_ar.fill = _fl(C_RED)
-            cell_ar.font = Font(bold=True, color="FFFFFF")
+            cell_ar.number_format = NUM_FMT
+            cell_ar.fill = _fl(C_RED); cell_ar.font = Font(bold=True, color="FFFFFF")
             row += 1
     row += 2
 
@@ -581,43 +1121,46 @@ def _write_res(ws, ops_rows, cr, tr, mav_rows, analisis_1002, arancel_alerts=Non
         ws.cell(row, 1, "ANALISIS CTA 1002").font = _hf()
         ws.cell(row, 1).fill = _fl(C_HEADER)
         row += 1
-        hdrs_1002 = ["ESPECIE", "MONEDA", "SENTIDO", "ESTADO 1002",
+        hdrs_1002 = ["ESPECIE", "MONEDA", "SENTIDO", "CONCEPTO", "ESTADO 1002",
                      "VN BYMA 1002", "VN GALLO 1002", "DIF VN 1002",
                      "OTROS CTTES", "DIF VN OTROS", "NETO VN", "BALANCE"]
         for c, h in enumerate(hdrs_1002, 1):
             cell = ws.cell(row, c, h)
-            cell.font = _bf()
-            cell.fill = _fl("D9D9D9")
+            cell.font = _bf(); cell.fill = _fl("D9D9D9")
         row += 1
-        for a in sorted(analisis_1002, key=lambda x: x["especie"]):
+        for a in sorted(analisis_1002, key=lambda x: (x["especie"], x["concepto"])):
             co = C_GREEN if a["balance"] == "OK" else C_RED
             ws.cell(row,  1, a["especie"])
             ws.cell(row,  2, a["moneda"])
             ws.cell(row,  3, a["sentido"])
-            ws.cell(row,  4, a["estado_1002"])
-            _nf(ws, row,  5, a["vn_b_1002"])
-            _nf(ws, row,  6, a["vn_g_1002"])
-            _nf(ws, row,  7, a["dif_1002"])
-            ws.cell(row,  8, a["otros_cttes"])
-            _nf(ws, row,  9, a["dif_otros"])
-            _nf(ws, row, 10, a["neto"])
-            ws.cell(row, 11, a["balance"]).fill = _fl(co)
+            ws.cell(row,  4, a["concepto"])
+            ws.cell(row,  5, a["estado_1002"])
+            _nf(ws, row,  6, a["vn_b_1002"])
+            _nf(ws, row,  7, a["vn_g_1002"])
+            _nf(ws, row,  8, a["dif_1002"])
+            ws.cell(row,  9, a["otros_cttes"])
+            _nf(ws, row, 10, a["dif_otros"])
+            _nf(ws, row, 11, a["neto"])
+            ws.cell(row, 12, a["balance"]).fill = _fl(co)
             row += 1
 
 
 # ── Punto de entrada ──────────────────────────────────────────────────────────
 
-def generar_reporte(dat_file, xls_file, bil_file=None):
+def generar_reporte(dat_file, xls_file, bil_file=None, ap_file=None):
     """
     dat_file : UploadedFile — OPERSECEXT_GARA.DAT
     xls_file : UploadedFile — CONTBOLE.XLS
     bil_file : UploadedFile or None — OPERBILEXT_GARA.DAT (opcional)
+    ap_file  : UploadedFile or None — Actual Position DD-MM-AA.xlsx (opcional, para Control 999)
 
-    Devuelve (BytesIO, resumen_dict).
+    Devuelve (BytesIO con Excel, dict resumen).
     """
     dat_lines = dat_file.read().decode("latin-1").splitlines()
     xls_bytes = xls_file.read()
     bil_lines = bil_file.read().decode("latin-1").splitlines() if bil_file else []
+
+    process_date = _detect_process_date(dat_lines)
 
     esp_g, mer_g, cau_g, tra_g, snb_g, mav_g, arancel_alerts = _parse_gallo(xls_bytes)
     mer_b, cau_b = _parse_byma(dat_lines, esp_g)
@@ -634,7 +1177,6 @@ def generar_reporte(dat_file, xls_file, bil_file=None):
     ops_rows = _compare_ops(combined_b, combined_g,
                             ppt_keys_b, ppt_keys_g, snb_keys_b, snb_keys_g)
     ops_rows = _second_pass_ticker(ops_rows)
-
     for r in ops_rows:
         if r["estado"] == "SOLO BYMA":
             k = (r["ctte"], r["especie"], r["moneda"], r["sentido"])
@@ -647,27 +1189,78 @@ def generar_reporte(dat_file, xls_file, bil_file=None):
     a1002 = _analyze_1002(ops_rows)
     ops_rows = _apply_1002_compensation(ops_rows, a1002)
 
-    wb     = openpyxl.Workbook()
-    ws_res = wb.active;           ws_res.title = "Resumen"
+    agg = _build_currency_agg(mer_b, snb_b, cau_b, mer_g, snb_g, cau_g, tra_g, mav_g)
+    ver_rows = _build_verification_rows(ops_rows, cr)
+    ap_saldos, ap_extras, ap_filename = _cargar_saldos_actual_position_file(ap_file)
+
+    # ── Excel ─────────────────────────────────────────────────────────────────
+    wb = openpyxl.Workbook()
+    ws_res = wb.active
+    ws_res.title = "Resumen Ope-Titulos"
+
+    _write_control_999(wb, agg, ap_saldos, ap_extras, ap_filename, process_date)
+    for code in ("ARS", "USD_MEP", "USD_CABLE"):
+        _write_currency_sheet(wb, code, agg[code], process_date)
+    _write_verification_sheet(wb, ver_rows, process_date)
+
     ws_ops = wb.create_sheet("Operaciones")
     ws_cau = wb.create_sheet("Cauciones")
     ws_tra = wb.create_sheet("Trading Intraday")
     ws_mav = wb.create_sheet("MAV")
-    _write_res(ws_res, ops_rows, cr, tr, mav_g, a1002, arancel_alerts)
+    _write_res(ws_res, ops_rows, cr, tr, mav_g, a1002, arancel_alerts, process_date)
     _write_ops_sheet(ws_ops, ops_rows)
     _write_cau_sheet(ws_cau, cr)
     _write_tra_sheet(ws_tra, tr)
     _write_mav_sheet(ws_mav, mav_g)
 
+    orden = [
+        "Control 999", "Pesos ARS", "Dolar MEP", "USD Cable",
+        "Resumen Ope-Titulos", "Diferencias a Verificar",
+        "Operaciones", "Cauciones", "Trading Intraday", "MAV",
+    ]
+    wb._sheets = [wb[name] for name in orden if name in wb.sheetnames]
+
     output = BytesIO()
     wb.save(output)
     output.seek(0)
 
+    # ── Resumen para la UI ────────────────────────────────────────────────────
     cnt_ops = Counter(r["estado"] for r in ops_rows)
     cnt_cau = Counter(r["estado"] for r in cr)
+    # Diferencia neta por moneda (Neto BYMA vs Neto Gallo, suma de todos los conceptos)
+    moneda_estado = {}
+    for code in ("ARS", "USD_MEP", "USD_CABLE"):
+        ar_b = sum(d["ar_b"] for d in agg[code].values())
+        ae_b = sum(d["ae_b"] for d in agg[code].values())
+        ar_g = sum(d["ar_g"] for d in agg[code].values())
+        ae_g = sum(d["ae_g"] for d in agg[code].values())
+        neto_b = ar_b - ae_b
+        neto_g = ar_g - ae_g
+        dif = neto_b - neto_g
+        moneda_estado[code] = {
+            "label":  MON_LABEL[code],
+            "neto_b": neto_b,
+            "neto_g": neto_g,
+            "dif":    dif,
+            "estado": "OK" if abs(dif) <= TOL else "DIFERENCIA",
+        }
+    # Saldo final proyectado por moneda (si hay AP)
+    saldos_finales = {}
+    if ap_saldos:
+        for code, info in moneda_estado.items():
+            si = ap_saldos.get(code)
+            if si is not None:
+                # Aplica TOTAL MOVIMIENTOS Gallo (vista contable real)
+                # — Control 999 muestra BYMA y Gallo por separado; reportamos Gallo
+                saldos_finales[code] = {
+                    "label":       MON_LABEL[code],
+                    "saldo_ini":   si,
+                    "saldo_final": si + info["neto_g"],
+                }
 
     resumen = {
-        "fecha":               datetime.today().strftime("%d-%m-%Y"),
+        "fecha":               process_date.strftime("%d-%m-%Y"),
+        "process_date":        process_date.strftime("%d/%m/%Y"),
         "n_ops_ok":            cnt_ops.get("OK", 0),
         "n_ops_dif":           cnt_ops.get("DIFERENCIA", 0),
         "n_solo_byma":         cnt_ops.get("SOLO BYMA", 0),
@@ -681,5 +1274,9 @@ def generar_reporte(dat_file, xls_file, bil_file=None):
         "arancel_alerts":      arancel_alerts,
         "falta_boleto_detail": [r for r in ops_rows if r["verificar"] == "FALTA BOLETO"],
         "con_senebi":          bool(bil_lines),
+        "moneda_estado":       moneda_estado,
+        "saldos_finales":      saldos_finales,
+        "ap_filename":         ap_filename,
+        "n_ver_rows":          len(ver_rows),
     }
     return output, resumen
