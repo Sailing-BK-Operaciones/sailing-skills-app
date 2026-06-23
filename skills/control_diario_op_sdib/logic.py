@@ -76,13 +76,14 @@ MON_LABEL   = {"ARS": "Pesos ARS", "USD_MEP": "Dolar MEP", "USD_CABLE": "USD Cab
 MON_TITLE   = {"ARS": "PESOS (ARS)", "USD_MEP": "DOLAR MEP (USD)", "USD_CABLE": "USD CABLE (EXT)"}
 
 CONCEPTO_LABEL = {
-    "CI":  "CI - Contado Inmediato",
-    "CN":  "CN - Contado Normal",
-    "CAU": "CAU - Cauciones (apertura/capital)",
-    "TI":  "TI - Trading Intraday",
-    "MAV": "MAV - Operaciones MAV",
+    "CI":    "CI - Contado Inmediato",
+    "TI_CI": "CI - Trading Intraday",
+    "CAU":   "CAU - Cauciones (apertura/capital)",
+    "CN":    "CN - Contado Normal",
+    "TI":    "TI - Trading Intraday (plazo T1)",
+    "MAV":   "MAV - Operaciones MAV",
 }
-CONCEPTO_ORDER = {"CI": 0, "CN": 1, "CAU": 2, "TI": 3, "MAV": 4}
+CONCEPTO_ORDER = {"CI": 0, "TI_CI": 1, "CAU": 2, "CN": 3, "TI": 4, "MAV": 5}
 SEGMENTO_ORDER = {"G": 0, "NG": 1}
 
 
@@ -238,8 +239,8 @@ def _parse_gallo(file_bytes):
                 cau[(ctte, sen, mon_cau)]["total"] += imp
         elif op in GALLO_TRAS:
             if sen and mon:
-                tra[(ctte, esp, mon, sen)][0] += vn
-                tra[(ctte, esp, mon, sen)][1] += imp
+                tra[(ctte, esp, mon, sen, concepto_ppt)][0] += vn
+                tra[(ctte, esp, mon, sen, concepto_ppt)][1] += imp
         elif op in GALLO_MAV:
             mav.append({"ctte": ctte, "op": op, "esp": esp,
                         "sen": sen or "V", "mon": mon or "Pesos",
@@ -350,10 +351,11 @@ def _compare_cau(b, g):
 def _compare_tra(g):
     rows = []
     for k in sorted(g):
-        ctte, esp, mon, sen = k
+        ctte, esp, mon, sen, concepto = k
         gv = g[k]
         rows.append({
             "ctte": ctte, "especie": esp, "moneda": mon, "sentido": sen,
+            "concepto": concepto,
             "vn_b": 0., "vn_g": gv[0], "dif_vn": -gv[0],
             "imp_b": 0., "imp_g": gv[1], "dif_imp": -gv[1],
             "estado": "TRADING INTRADAY",
@@ -440,7 +442,9 @@ def _build_currency_agg(mer_b, snb_b, cau_b, mer_g, snb_g, cau_g, tra_g, mav_g):
                                     "imp_b": 0., "imp_g": 0.})
            for m in ("ARS", "USD_MEP", "USD_CABLE")}
 
-    tra_keys = set(tra_g.keys())
+    # tra_g ahora tiene clave 5-tuple (ctte, esp, mon, sen, concepto)
+    # Para el reclasificador BYMA->TI usamos solo el 4-tuple (sin concepto)
+    tra_keys_4 = {(c, e, m, s) for (c, e, m, s, _) in tra_g}
 
     def _add(side, mon_internal, concepto, segmento, sen, imp):
         code = MON_TO_CODE.get(mon_internal)
@@ -466,8 +470,10 @@ def _build_currency_agg(mer_b, snb_b, cau_b, mer_g, snb_g, cau_g, tra_g, mav_g):
 
     for k, v in mer_b.items():
         ctte, esp, mon, sen, concepto = k
-        if (ctte, esp, mon, sen) in tra_keys:
-            _add("B", mon, "TI", "G", sen, v[1])
+        if (ctte, esp, mon, sen) in tra_keys_4:
+            # TI plazo CI liquida hoy / TI plazo T1 (CN) liquida mañana
+            ti_bucket = "TI_CI" if concepto == "CI" else "TI"
+            _add("B", mon, ti_bucket, "G", sen, v[1])
         else:
             _add("B", mon, concepto, "G", sen, v[1])
     for k, v in mer_g.items():
@@ -489,12 +495,13 @@ def _build_currency_agg(mer_b, snb_b, cau_b, mer_g, snb_g, cau_g, tra_g, mav_g):
         _add_cau("G", mon_cau, sen, v["capital"])
 
     for k, v in tra_g.items():
-        ctte, esp, mon, sen = k
+        ctte, esp, mon, sen, concepto = k
         code = MON_TO_CODE.get(mon)
         if not code:
             continue
         ar, ae = _ar_ae(sen, v[1])
-        cell = agg[code][("TI", "G")]
+        ti_bucket = "TI_CI" if concepto == "CI" else "TI"
+        cell = agg[code][(ti_bucket, "G")]
         cell["ar_g"] += ar; cell["ae_g"] += ae; cell["imp_g"] += v[1]
 
     for r in mav_g:
@@ -595,7 +602,36 @@ def _st_color(estado):
 
 # ── Hoja Control 999 ───────────────────────────────────────────────────────────
 
+def _emit_row_999(ws, r, label, neto_b, neto_g, nota="", is_subtotal=False):
+    """Escribe una fila de movimiento en Control 999 y retorna la siguiente fila."""
+    dif = neto_b - neto_g
+    ws.cell(row=r, column=1, value=label)
+    cell_b = _nf(ws, r, 2, neto_b)
+    cell_g = _nf(ws, r, 3, neto_g)
+    cell_d = _nf(ws, r, 4, dif)
+    if is_subtotal:
+        for cell in [ws.cell(row=r, column=1), cell_b, cell_g, cell_d]:
+            cell.font = Font(bold=True, italic=True)
+    if nota:
+        ws.cell(row=r, column=5, value=nota).font = Font(italic=True, size=9, color="595959")
+    for col in range(1, 6):
+        ws.cell(row=r, column=col).border = _border()
+        if is_subtotal:
+            ws.cell(row=r, column=col).fill = _fl(C_TOTAL)
+    if abs(dif) > TOL:
+        ws.cell(row=r, column=4).fill = _fl(C_RED)
+        ws.cell(row=r, column=4).font = Font(bold=True, italic=True) if is_subtotal else _bf()
+    return r + 1
+
+
 def _write_control_999(wb, agg, ap_saldos, ap_extras, ap_filename, process_date):
+    """Hoja Control 999 — saldo proyectado a fin del dia por moneda.
+    Estructura por moneda:
+      SALDO ACTUAL POSITION
+      CI / CI Trading Intraday / CAU   (liquida hoy)
+      SALDO FINAL DIARIO  = Saldo AP + CI + TI_CI + CAU
+      CN / TI plazo T1                  (informacional — liquida mañana)
+    """
     ws = wb.create_sheet("Control 999")
     ws.sheet_view.showGridLines = False
     fecha = process_date.strftime('%d/%m/%Y')
@@ -625,7 +661,7 @@ def _write_control_999(wb, agg, ap_saldos, ap_extras, ap_filename, process_date)
         ws.row_dimensions[r].height = 22
         r += 1
 
-        for i, h in enumerate(["Concepto", "BYMA", "Gallo", "Diferencia", "Notas"], 1):
+        for i, h in enumerate(["Concepto", "BYMA", "Gallo x boletos", "Diferencia", "Notas"], 1):
             cell = ws.cell(row=r, column=i, value=h)
             cell.fill = _fl(C_HEADER)
             cell.font = _hf()
@@ -634,6 +670,16 @@ def _write_control_999(wb, agg, ap_saldos, ap_extras, ap_filename, process_date)
         r += 1
 
         saldo_inicio = ap_saldos.get(code)
+        ag = agg[code]
+
+        def neto_buckets(buckets):
+            b = sum(ag.get(bk, {}).get("ar_b", 0.) - ag.get(bk, {}).get("ae_b", 0.)
+                    for bk in buckets)
+            g = sum(ag.get(bk, {}).get("ar_g", 0.) - ag.get(bk, {}).get("ae_g", 0.)
+                    for bk in buckets)
+            return b, g
+
+        # SALDO ACTUAL POSITION
         ws.cell(row=r, column=1,
                 value="SALDO ACTUAL POSITION (proyectado del dia)").font = _bf()
         if saldo_inicio is not None:
@@ -657,75 +703,47 @@ def _write_control_999(wb, agg, ap_saldos, ap_extras, ap_filename, process_date)
             ws.cell(row=r, column=col).fill = _fl(C_HDR_GRAY)
         r += 1
 
-        movs_byma_tot = 0.0
-        movs_gallo_tot = 0.0
-        keys_sorted = sorted(agg[code].keys(),
-                             key=lambda x: (CONCEPTO_ORDER.get(x[0], 99),
-                                            SEGMENTO_ORDER.get(x[1], 99)))
-        for (concepto, segmento) in keys_sorted:
-            d = agg[code][(concepto, segmento)]
-            neto_b = d["ar_b"] - d["ae_b"]
-            neto_g = d["ar_g"] - d["ae_g"]
-            if abs(neto_b) + abs(neto_g) <= TOL:
-                continue
-            dif = neto_b - neto_g
+        # CI (G + NG merged) — liquida hoy
+        ci_b, ci_g = neto_buckets([("CI", "G"), ("CI", "NG")])
+        if abs(ci_b) + abs(ci_g) > TOL:
+            r = _emit_row_999(ws, r, "  CI - Contado Inmediato",
+                              ci_b, ci_g, "liquida hoy (T+0)")
 
-            label = f"  {CONCEPTO_LABEL.get(concepto, concepto)} ({segmento})"
-            ws.cell(row=r, column=1, value=label)
-            _nf(ws, r, 2, neto_b)
-            _nf(ws, r, 3, neto_g)
-            _nf(ws, r, 4, dif)
-            nota = {
-                "CI":  "liquida hoy (T+0)",
-                "CN":  "liquida manana (T+1)",
-                "CAU": "apertura - capital hoy",
-                "TI":  "trading intraday",
-                "MAV": "MAV - informacional",
-            }.get(concepto, "")
-            ws.cell(row=r, column=5, value=nota).font = \
-                Font(italic=True, size=9, color="595959")
-            for col in range(1, 6):
-                ws.cell(row=r, column=col).border = _border()
-            if abs(dif) > TOL:
-                ws.cell(row=r, column=4).fill = _fl(C_RED)
-                ws.cell(row=r, column=4).font = _bf()
-            movs_byma_tot  += neto_b
-            movs_gallo_tot += neto_g
-            r += 1
+        # CI TRADING INTRADAY — liquida hoy
+        ti_ci_b, ti_ci_g = neto_buckets([("TI_CI", "G")])
+        if abs(ti_ci_b) + abs(ti_ci_g) > TOL:
+            r = _emit_row_999(ws, r, "  CI - Trading Intraday",
+                              ti_ci_b, ti_ci_g, "intraday - liquida hoy")
 
-        ws.cell(row=r, column=1, value="TOTAL MOVIMIENTOS DIA").font = _bf()
-        _nf(ws, r, 2, movs_byma_tot).font = _bf()
-        _nf(ws, r, 3, movs_gallo_tot).font = _bf()
-        _nf(ws, r, 4, movs_byma_tot - movs_gallo_tot).font = _bf()
-        for col in range(1, 6):
-            ws.cell(row=r, column=col).fill = _fl(C_TOTAL)
-            ws.cell(row=r, column=col).border = _border()
-        if abs(movs_byma_tot - movs_gallo_tot) > TOL:
-            ws.cell(row=r, column=4).fill = _fl(C_RED)
-            ws.cell(row=r, column=4).font = Font(bold=True, color="FFFFFF")
-        r += 1
+        # CAU (apertura/capital) — liquida hoy
+        cau_b, cau_g = neto_buckets([("CAU", "G")])
+        if abs(cau_b) + abs(cau_g) > TOL:
+            r = _emit_row_999(ws, r, "  CAU - Cauciones (apertura/capital)",
+                              cau_b, cau_g, "apertura - capital hoy")
 
+        # SALDO FINAL DIARIO = Saldo AP + CI + CI_TI + CAU
+        total_hoy_b = ci_b + ti_ci_b + cau_b
+        total_hoy_g = ci_g + ti_ci_g + cau_g
         if saldo_inicio is not None:
-            saldo_final_b = saldo_inicio + movs_byma_tot
-            saldo_final_g = saldo_inicio + movs_gallo_tot
-            dif_final = saldo_final_b - saldo_final_g
-            ws.cell(row=r, column=1, value="SALDO FINAL PROYECTADO").font = \
-                Font(bold=True, color="FFFFFF")
-            _nf(ws, r, 2, saldo_final_b).font = Font(bold=True, color="FFFFFF")
-            _nf(ws, r, 3, saldo_final_g).font = Font(bold=True, color="FFFFFF")
-            _nf(ws, r, 4, dif_final).font = Font(bold=True, color="FFFFFF")
-            for col in range(1, 6):
-                ws.cell(row=r, column=col).fill = _fl(C_TITLE)
-                ws.cell(row=r, column=col).border = _border()
-            r += 1
+            saldo_final_b = saldo_inicio + total_hoy_b
+            saldo_final_g = saldo_inicio + total_hoy_g
         else:
-            ws.cell(row=r, column=1,
-                    value="SALDO FINAL = N/D (sin Actual Position de base)").font = \
-                Font(italic=True, color="C00000")
-            for col in range(1, 6):
-                ws.cell(row=r, column=col).fill = _fl(C_YELLOW)
-                ws.cell(row=r, column=col).border = _border()
-            r += 1
+            saldo_final_b = total_hoy_b
+            saldo_final_g = total_hoy_g
+        r = _emit_row_999(ws, r, "SALDO FINAL DIARIO",
+                          saldo_final_b, saldo_final_g, is_subtotal=True)
+
+        # CN (G + NG merged) — liquida mañana (informacional)
+        cn_b, cn_g = neto_buckets([("CN", "G"), ("CN", "NG")])
+        if abs(cn_b) + abs(cn_g) > TOL:
+            r = _emit_row_999(ws, r, "  CN - Contado Normal",
+                              cn_b, cn_g, "liquida manana (T+1)")
+
+        # TI plazo T1 — liquida mañana (informacional)
+        ti_b, ti_g = neto_buckets([("TI", "G")])
+        if abs(ti_b) + abs(ti_g) > TOL:
+            r = _emit_row_999(ws, r, "  TI - Trading Intraday (plazo T1)",
+                              ti_b, ti_g, "trading intraday T1")
 
         r += 2
 
@@ -988,7 +1006,7 @@ def _write_cau_sheet(ws, rows):
 
 
 def _write_tra_sheet(ws, rows):
-    _wh(ws, ["CTTE", "ESPECIE", "MONEDA", "SENTIDO",
+    _wh(ws, ["CTTE", "ESPECIE", "MONEDA", "SENTIDO", "CONCEPTO",
              "VN BYMA", "VN GALLO", "DIF VN",
              "IMP BYMA", "IMP GALLO", "DIF IMP", "ESTADO"])
     for i, r in enumerate(rows, 2):
@@ -997,15 +1015,16 @@ def _write_tra_sheet(ws, rows):
         ws.cell(i, 2, r["especie"])
         ws.cell(i, 3, r["moneda"])
         ws.cell(i, 4, r["sentido"])
-        _nf(ws, i, 5, r["vn_b"])
-        _nf(ws, i, 6, r["vn_g"])
-        _nf(ws, i, 7, r["dif_vn"])
-        _nf(ws, i, 8, r["imp_b"])
-        _nf(ws, i, 9, r["imp_g"])
-        _nf(ws, i, 10, r["dif_imp"])
-        ws.cell(i, 11, r["estado"])
-        _rf(ws, i, 11, co)
-    ws.auto_filter.ref = f"A1:K{len(rows)+1}"
+        ws.cell(i, 5, r.get("concepto", ""))
+        _nf(ws, i, 6, r["vn_b"])
+        _nf(ws, i, 7, r["vn_g"])
+        _nf(ws, i, 8, r["dif_vn"])
+        _nf(ws, i, 9, r["imp_b"])
+        _nf(ws, i, 10, r["imp_g"])
+        _nf(ws, i, 11, r["dif_imp"])
+        ws.cell(i, 12, r["estado"])
+        _rf(ws, i, 12, co)
+    ws.auto_filter.ref = f"A1:L{len(rows)+1}"
     _af(ws)
 
 
@@ -1177,10 +1196,12 @@ def generar_reporte(dat_file, xls_file, bil_file=None, ap_file=None):
     ops_rows = _compare_ops(combined_b, combined_g,
                             ppt_keys_b, ppt_keys_g, snb_keys_b, snb_keys_g)
     ops_rows = _second_pass_ticker(ops_rows)
+    # tra_g ahora tiene clave 5-tuple; reducimos a 4-tuple para el match
+    tra_keys_4_main = {(c, e, m, s) for (c, e, m, s, _) in tra_g}
     for r in ops_rows:
         if r["estado"] == "SOLO BYMA":
             k = (r["ctte"], r["especie"], r["moneda"], r["sentido"])
-            if k in tra_g:
+            if k in tra_keys_4_main:
                 r["estado"]    = "TRADING INTRADAY"
                 r["verificar"] = ""
 
@@ -1244,19 +1265,27 @@ def generar_reporte(dat_file, xls_file, bil_file=None, ap_file=None):
             "dif":    dif,
             "estado": "OK" if abs(dif) <= TOL else "DIFERENCIA",
         }
-    # Saldo final proyectado por moneda (si hay AP)
+    # Saldo final proyectado por moneda (si hay AP) — usa SOLO lo que liquida hoy:
+    # CI (G + NG) + TI plazo CI + CAU. CN y TI plazo T1 son informativos (T+1).
     saldos_finales = {}
     if ap_saldos:
-        for code, info in moneda_estado.items():
+        for code in ("ARS", "USD_MEP", "USD_CABLE"):
             si = ap_saldos.get(code)
-            if si is not None:
-                # Aplica TOTAL MOVIMIENTOS Gallo (vista contable real)
-                # — Control 999 muestra BYMA y Gallo por separado; reportamos Gallo
-                saldos_finales[code] = {
-                    "label":       MON_LABEL[code],
-                    "saldo_ini":   si,
-                    "saldo_final": si + info["neto_g"],
-                }
+            if si is None:
+                continue
+            ag = agg[code]
+            def _neto_g_b(buckets):
+                return sum(ag.get(bk, {}).get("ar_g", 0.) - ag.get(bk, {}).get("ae_g", 0.)
+                           for bk in buckets)
+            ci_g    = _neto_g_b([("CI", "G"), ("CI", "NG")])
+            ti_ci_g = _neto_g_b([("TI_CI", "G")])
+            cau_g   = _neto_g_b([("CAU", "G")])
+            total_hoy_g = ci_g + ti_ci_g + cau_g
+            saldos_finales[code] = {
+                "label":       MON_LABEL[code],
+                "saldo_ini":   si,
+                "saldo_final": si + total_hoy_g,
+            }
 
     resumen = {
         "fecha":               process_date.strftime("%d-%m-%Y"),
