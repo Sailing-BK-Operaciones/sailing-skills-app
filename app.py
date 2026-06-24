@@ -332,13 +332,13 @@ if not check_login():
 OP_SKILLS = [
     "Archivos Compartidos",
     "Actual Position",
-    "Control Márgenes Gara BYMA",
     "Consolida SI2 para NASDAQ",
-    "Arreglos Garantías",
-    "Control diario OP-SDIB (MA)",
     "Risk Monitoring Client",
+    "Control diario OP-SDIB (MA)",
     "Control Aforos BYMA",
     "Conversión Dólares Renta",
+    "Control Márgenes Gara BYMA",
+    "Arreglos Garantías",
 ]
 GEST_SKILLS = [
     "Tesorería",
