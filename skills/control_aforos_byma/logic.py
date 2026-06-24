@@ -20,20 +20,39 @@ from openpyxl.utils import get_column_letter
 
 
 # ─── Tablas Lista <-> Aforo BYMA ─────────────────────────────────────────────
-TABLAS = {
-    "Renta Variable": {
-        1: 85, 2: 80, 3: 75, 4: 70, 5: 60, 6: 50, 7: 40, 8: 30,
-    },
-    "Renta Fija Publicos": {
-        10: 95, 11: 90, 12: 85, 13: 80, 14: 75, 15: 70, 16: 65, 17: 60,
-    },
-    "Renta Fija Privados": {
-        22: 85, 23: 80, 24: 75, 25: 70, 26: 65, 27: 60,
-    },
-    "Letras y Bonos del tesoro": {
-        85: 85, 90: 90, 95: 95,
-    },
-}
+# Se cargan en runtime desde 'tabla listas gallo vs aforos.xlsx' (Archivos Compartidos).
+def _cargar_tablas(aforo_sail_file):
+    """Lee tabla listas gallo vs aforos.xlsx.
+    Bloques de 4 cols (Lista | Aforo BYMA | Aforo Sail | vacía).
+    Fila 0 = nombre de tabla, fila 1 = encabezados, filas 2+ = datos.
+    Usa la columna 'Aforo' (BYMA), no 'Aforo Sail'.
+    """
+    aforo_sail_file.seek(0)
+    wb = openpyxl.load_workbook(io.BytesIO(aforo_sail_file.read()), data_only=True)
+    ws = wb.active
+    rows = list(ws.iter_rows(values_only=True))
+    tablas = {}
+    if not rows:
+        return tablas
+    ncols = len(rows[0])
+    for start_col in range(0, ncols, 4):
+        nombre = rows[0][start_col]
+        if not nombre:
+            continue
+        nombre = str(nombre).strip()
+        tabla = {}
+        for row in rows[2:]:
+            lista_val = row[start_col] if start_col < len(row) else None
+            aforo_val = row[start_col + 1] if start_col + 1 < len(row) else None
+            if lista_val is None or aforo_val is None:
+                continue
+            try:
+                tabla[int(lista_val)] = int(aforo_val)
+            except (ValueError, TypeError):
+                continue
+        if tabla:
+            tablas[nombre] = tabla
+    return tablas
 
 
 def _tabla_para_lista(lista):
@@ -68,12 +87,12 @@ def _tabla_para_tipo(tipo_col2, tipo_activo):
     return "Renta Variable"
 
 
-def _aforo_para_lista(tabla, lista):
-    return TABLAS.get(tabla, {}).get(lista)
+def _aforo_para_lista(tablas, tabla, lista):
+    return tablas.get(tabla, {}).get(lista)
 
 
-def _lista_para_aforo(tabla, aforo_pct):
-    for l, a in TABLAS.get(tabla, {}).items():
+def _lista_para_aforo(tablas, tabla, aforo_pct):
+    for l, a in tablas.get(tabla, {}).items():
         if a == aforo_pct:
             return l
     return "REVISAR"
@@ -134,11 +153,13 @@ def _fecha_vencimiento(wb_xls, ws_xls, row_idx):
     return None
 
 
-def generar_control(especies_file):
+def generar_control(especies_file, aforo_sail_file):
     """
     Parametros
     ----------
-    especies_file : file-like  — ESPECIES.XLS
+    especies_file    : file-like  — ESPECIES.XLS
+    aforo_sail_file  : file-like  — tabla listas gallo vs aforos.xlsx
+                                    (bloques de 4 cols: Lista | Aforo BYMA | Aforo Sail | vacía)
 
     Retorna
     -------
@@ -149,6 +170,14 @@ def generar_control(especies_file):
     """
     HOY = datetime.date.today()
     advertencias = []
+
+    # ── Cargar tablas Lista <-> Aforo BYMA desde archivo externo ─────────────
+    tablas = _cargar_tablas(aforo_sail_file)
+    if not tablas:
+        advertencias.append(
+            "No se pudieron cargar las tablas Lista→Aforo desde 'tabla listas gallo vs aforos.xlsx'. "
+            "Verificar formato (bloques de 4 cols: Lista | Aforo | Aforo Sail | vacía)."
+        )
 
     # ── Leer ESPECIES.XLS ────────────────────────────────────────────────────
     especies_file.seek(0)
@@ -200,7 +229,7 @@ def generar_control(especies_file):
             # ── Control de aforos ────────────────────────────────────────────
             if lista == 0:
                 tabla_inf = _tabla_para_tipo(tipo_col2, tipo_activo)
-                lista_sug = _lista_para_aforo(tabla_inf, aforo_byma) if tabla_inf else "REVISAR"
+                lista_sug = _lista_para_aforo(tablas, tabla_inf, aforo_byma) if tabla_inf else "REVISAR"
                 sin_lista.append({
                     "cvsa": cvsa, "ticker": ticker, "nombre": nombre,
                     "tipo_activo": tipo_activo, "tipo_col2": tipo_col2,
@@ -216,7 +245,7 @@ def generar_control(especies_file):
                     )
                     continue
 
-                aforo_sailing = _aforo_para_lista(tabla, lista)
+                aforo_sailing = _aforo_para_lista(tablas, tabla, lista)
                 if aforo_sailing is None:
                     advertencias.append(
                         f"Lista {lista} no mapeada en tabla '{tabla}' — CVSA {cvsa}. Omitida."
@@ -226,7 +255,7 @@ def generar_control(especies_file):
                 if aforo_sailing == aforo_byma:
                     total_ok += 1
                 else:
-                    lista_sug = _lista_para_aforo(tabla, aforo_byma)
+                    lista_sug = _lista_para_aforo(tablas, tabla, aforo_byma)
                     diferencias.append({
                         "cvsa": cvsa, "ticker": ticker, "nombre": nombre,
                         "tipo_activo": tipo_activo, "tabla": tabla,

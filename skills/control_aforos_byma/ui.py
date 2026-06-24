@@ -15,9 +15,12 @@ def render():
 
     with st.expander("¿Cómo usar esta skill?"):
         st.markdown("""
-        **Archivo de referencia** (se toma automáticamente de Archivos Compartidos):
+        **Archivos de referencia** (se toman automáticamente de Archivos Compartidos):
         - **ESPECIES.XLS** — maestro de especies: código CVSA, Lista asignada (col F)
           y haircut BYMA API (col 26). Aforo BYMA = 100 − haircut.
+        - **tabla listas gallo vs aforos.xlsx** — equivalencia Lista → Aforo BYMA por segmento
+          (Renta Variable, Renta Fija Públicos/Privados, Letras y Bonos del Tesoro). Si se actualizan
+          los aforos en este archivo, la skill toma los nuevos valores sin necesidad de cambiar código.
 
         **Output 1 — `DIFERENCIAS AFOROS.xlsx`:**
         - Hoja **Diferencias Aforo**: especies cuya Lista en Gallo no coincide con el aforo BYMA.
@@ -31,21 +34,16 @@ def render():
         - Una hoja por categoría: Títulos Públicos, Letras del Tesoro, Obligaciones Negociables,
           Acciones, CEDEARs, FCI, Otros. Incluye ticker ARS / MEP / Cable, vencimiento/emisor,
           haircut y aforo. Colores según nivel de aforo.
-
-        **Tablas Lista → Aforo:**
-
-        | Segmento | Listas | Aforos |
-        |---|---|---|
-        | Renta Variable | 1–8 | 85 %–30 % |
-        | Renta Fija Públicos | 10–17 | 95 %–60 % |
-        | Renta Fija Privados | 22–27 | 85 %–60 % |
-        | Letras y Bonos del Tesoro | 85 / 90 / 95 | 85 % / 90 % / 95 % |
         """)
 
-    # ── Input (desde Archivos Compartidos) ────────────────────────────────────
+    # ── Inputs (desde Archivos Compartidos) ───────────────────────────────────
     especies_file = shared_or_upload(
         "shared_especies", "Maestro de especies (ESPECIES.XLS)",
         ["xls", "xlsx"], "caf_especies"
+    )
+    aforo_sail_file = shared_or_upload(
+        "shared_aforo_sail", "tabla listas gallo vs aforos.xlsx",
+        ["xlsx"], "caf_aforo"
     )
 
     # ── Session state ─────────────────────────────────────────────────────────
@@ -54,8 +52,11 @@ def render():
 
     st.divider()
 
-    if not especies_file:
-        st.info("Cargá ESPECIES.XLS desde Archivos Compartidos para ejecutar el control.")
+    faltan = []
+    if not especies_file:   faltan.append("ESPECIES.XLS")
+    if not aforo_sail_file: faltan.append("tabla listas gallo vs aforos.xlsx")
+    if faltan:
+        st.info(f"Cargá desde Archivos Compartidos: {', '.join(faltan)}.")
         return
 
     # ── Ejecución ─────────────────────────────────────────────────────────────
@@ -63,7 +64,9 @@ def render():
         with st.spinner("Procesando maestro de especies..."):
             try:
                 from skills.control_aforos_byma.logic import generar_control
-                xlsx_dif_bytes, xlsx_rc_bytes, resumen, advertencias = generar_control(especies_file)
+                xlsx_dif_bytes, xlsx_rc_bytes, resumen, advertencias = generar_control(
+                    especies_file, aforo_sail_file
+                )
                 st.session_state["caf_result"] = {
                     "xlsx_dif": xlsx_dif_bytes,
                     "xlsx_rc":  xlsx_rc_bytes,
