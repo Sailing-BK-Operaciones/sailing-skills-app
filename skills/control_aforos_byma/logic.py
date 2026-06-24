@@ -55,11 +55,11 @@ def _cargar_tablas(aforo_sail_file):
     return tablas
 
 
-def _tabla_para_lista(lista):
-    if 1 <= lista <= 8:       return "Renta Variable"
-    if 10 <= lista <= 17:     return "Renta Fija Publicos"
-    if 22 <= lista <= 27:     return "Renta Fija Privados"
-    if lista in (85, 90, 95): return "Letras y Bonos del tesoro"
+def _tabla_para_lista(tablas, lista):
+    """Devuelve el nombre de la tabla que contiene esa lista, leyendo desde tablas."""
+    for nombre, mapping in tablas.items():
+        if lista in mapping:
+            return nombre
     return None
 
 
@@ -237,7 +237,7 @@ def generar_control(especies_file, aforo_sail_file):
                     "lista_sugerida": lista_sug,
                 })
             else:
-                tabla = _tabla_para_lista(lista)
+                tabla = _tabla_para_lista(tablas, lista)
                 if tabla is None:
                     advertencias.append(
                         f"Lista {lista} fuera de rango — CVSA {cvsa} ({ticker}), "
