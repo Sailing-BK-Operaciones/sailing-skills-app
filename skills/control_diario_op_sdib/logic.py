@@ -40,6 +40,7 @@ GALLO_CAU  = {"CCCD", "CCTE", "TCCD", "TOCT", "CTCD", "CTTD", "CCCP", "CCFP"}
 GALLO_TRAS = {"VTTR", "COTR"}
 GALLO_SNB  = {"CRCN", "VRCN"}
 GALLO_MAV  = {"VCHM", "CCHM"}
+GALLO_OPC  = {"COPR", "VTPR"}   # Opciones (compra/venta de prima) — siempre ARS, siempre T+0
 
 GALLO_SEN = {
     "CPRA": "C", "CPU$": "C", "CPUC": "C", "CSU$": "C",
@@ -77,24 +78,56 @@ MON_TITLE   = {"ARS": "PESOS (ARS)", "USD_MEP": "DOLAR MEP (USD)", "USD_CABLE": 
 
 CONCEPTO_LABEL = {
     "CI":    "CI - Contado Inmediato",
+    "OPC":   "CI - Opciones",
     "TI_CI": "CI - Trading Intraday",
     "CAU":   "CAU - Cauciones (apertura/capital)",
     "CN":    "CN - Contado Normal",
     "TI":    "TI - Trading Intraday (plazo T1)",
     "MAV":   "MAV - Operaciones MAV",
 }
-CONCEPTO_ORDER = {"CI": 0, "TI_CI": 1, "CAU": 2, "CN": 3, "TI": 4, "MAV": 5}
+CONCEPTO_ORDER = {"CI": 0, "OPC": 1, "TI_CI": 2, "CAU": 3, "CN": 4, "TI": 5, "MAV": 6}
 SEGMENTO_ORDER = {"G": 0, "NG": 1}
 
 
 # ── Helpers de parseo ──────────────────────────────────────────────────────────
 
-def _map_byma_esp(esp_raw, gallo_esp):
+def _load_byma_ticker_map(especies_file):
+    """Lee ESPECIES.XLS y construye {byma_ticker: (gallo_ticker, moneda)}.
+    Hoja Datos_Fijos_Especies: col 9=Norm (Gallo pesos), col 10=Parid (BYMA MEP),
+    col 11=Cable (BYMA Cable). Cubre excepciones como GOGLD→GOOGL.
+    """
+    result = {}
+    if especies_file is None:
+        return result
+    try:
+        especies_file.seek(0)
+        wb = xlrd.open_workbook(file_contents=especies_file.read())
+        ws = wb.sheet_by_name("Datos_Fijos_Especies")
+    except Exception:
+        return result
+    SKIP = {"", "NO EXISTE", "0"}
+    for r in range(1, ws.nrows):
+        norm  = str(ws.cell_value(r, 9)).strip().strip("'")
+        parid = str(ws.cell_value(r, 10)).strip().strip("'")
+        cable = str(ws.cell_value(r, 11)).strip().strip("'")
+        if not norm or norm in SKIP:
+            continue
+        if parid and parid not in SKIP and parid != norm:
+            result[parid] = (norm, "DOLAR MEP")
+        if cable and cable not in SKIP and cable != norm:
+            result[cable] = (norm, "USD")
+    return result
+
+
+def _map_byma_esp(esp_raw, gallo_esp, byma_map=None):
     esp = esp_raw.strip()
     if esp == "PESOS":
         return ("PESOS", "Pesos")
     if esp in DNC_EXCEPTIONS:
         return DNC_EXCEPTIONS[esp]
+    # Lookup explicito ESPECIES.XLS (cubre GOGLD→GOOGL y similares)
+    if byma_map and esp in byma_map:
+        return byma_map[esp]
     if len(esp) > 1 and esp.endswith("C") and esp[:-1] in gallo_esp:
         return (esp[:-1], "USD")
     if len(esp) > 1 and esp.endswith("D") and esp[:-1] in gallo_esp:
@@ -130,13 +163,16 @@ def _detect_process_date(dat_lines):
     return date.today()
 
 
-def _parse_byma(lines, gallo_esp):
+def _parse_byma(lines, gallo_esp, byma_map=None):
     """Parsea OPERSECEXT_GARA.DAT (segmento garantizado PPT BYMA).
-    Keys: mer = (ctte, esp, mon, sen, concepto)   concepto in {CI, CN}
+    Keys: mer = (ctte, esp, mon, sen, concepto)   concepto in {CI, CN, OPC}
           cau = (ctte, sen, mon)
+    Retorna (mer, cau, opt_esp) donde opt_esp es el conjunto de tickers
+    de opciones (tipo='O') — siempre ARS, siempre concepto OPC.
     """
     mer = defaultdict(lambda: [0., 0.])
     cau = defaultdict(lambda: [0., 0.])
+    opt_esp = set()
     for line in lines:
         p = line.split('"')
         if len(p) < 28:
@@ -155,18 +191,32 @@ def _parse_byma(lines, gallo_esp):
             mon_cau = "DOLAR MEP" if p[7].strip() == "DOLAR" else "Pesos"
             cau[(ctte, sen, mon_cau)][0] += vn
             cau[(ctte, sen, mon_cau)][1] += imp
+        elif tipo == "O":
+            # Opciones argentinas: siempre ARS, concepto OPC (plazo viene vacio en DAT)
+            esp, mon = _map_byma_esp(p[7], gallo_esp, byma_map)
+            opt_esp.add(esp)
+            mer[(ctte, esp, mon, sen, "OPC")][0] += vn
+            mer[(ctte, esp, mon, sen, "OPC")][1] += imp
         else:
-            esp, mon = _map_byma_esp(p[7], gallo_esp)
+            esp, mon = _map_byma_esp(p[7], gallo_esp, byma_map)
             plazo_code = p[9].strip()
             concepto = "CI" if plazo_code == "0" else "CN"
             mer[(ctte, esp, mon, sen, concepto)][0] += vn
             mer[(ctte, esp, mon, sen, concepto)][1] += imp
-    return dict(mer), dict(cau)
+    return dict(mer), dict(cau), opt_esp
 
 
-def _parse_senebi(lines, gallo_esp):
-    """Parsea OPERBILEXT_GARA.DAT (SENEBI bilateral). Infiere contraparte."""
+def _parse_senebi(lines, gallo_esp, byma_map=None):
+    """Parsea OPERBILEXT_GARA.DAT (SENEBI bilateral).
+    Infiere contraparte solo si campo [29] tiene CTTE (evita entradas fantasma
+    ctte=None que nunca matchean Gallo).
+    Cuando ctte_cli esta vacio (contraparte externa sin cuenta Gallo), registra
+    el par en ext_pairs para compensacion posterior (SENEBI GARA EXTERNO).
+    Retorna (snb_dict, ext_pairs) donde ext_pairs es lista de
+    (cparty, esp, mon, sen_cli, concepto, imp).
+    """
     snb = defaultdict(lambda: [0., 0.])
+    ext_pairs = []
     for line in lines:
         p = line.split('"')
         if len(p) < 30:
@@ -183,14 +233,18 @@ def _parse_senebi(lines, gallo_esp):
             continue
         if sen_cli not in ("V", "C"):
             continue
-        esp, mon = _map_byma_esp(esp_raw, gallo_esp)
+        esp, mon = _map_byma_esp(esp_raw, gallo_esp, byma_map)
         concepto = "CI" if plazo_code == "0" else "CN"
         snb[(ctte_cli, esp, mon, sen_cli, concepto)][0] += vn
         snb[(ctte_cli, esp, mon, sen_cli, concepto)][1] += imp
-        sen_cp = "V" if sen_cli == "C" else "C"
-        snb[(cparty, esp, mon, sen_cp, concepto)][0] += vn
-        snb[(cparty, esp, mon, sen_cp, concepto)][1] += imp
-    return dict(snb)
+        if cparty:
+            sen_cp = "V" if sen_cli == "C" else "C"
+            snb[(cparty, esp, mon, sen_cp, concepto)][0] += vn
+            snb[(cparty, esp, mon, sen_cp, concepto)][1] += imp
+            if not ctte_cli:
+                # Contraparte externa (sin cuenta Gallo) → guardar par para compensacion
+                ext_pairs.append((cparty, esp, mon, sen_cli, concepto, imp))
+    return dict(snb), ext_pairs
 
 
 def _parse_gallo(file_bytes):
@@ -249,6 +303,11 @@ def _parse_gallo(file_bytes):
             if sen and mon:
                 snb[(ctte, esp, mon, sen, concepto_ppt)][0] += vn
                 snb[(ctte, esp, mon, sen, concepto_ppt)][1] += imp
+        elif op in GALLO_OPC:
+            # Opciones: siempre ARS, siempre concepto OPC (independiente del plazo)
+            if sen and mon:
+                mer[(ctte, esp, mon, sen, "OPC")][0] += vn
+                mer[(ctte, esp, mon, sen, "OPC")][1] += imp
         elif sen and mon:
             mer[(ctte, esp, mon, sen, concepto_ppt)][0] += vn
             mer[(ctte, esp, mon, sen, concepto_ppt)][1] += imp
@@ -416,6 +475,65 @@ def _apply_1002_compensation(ops_rows, analisis_1002):
                 r["estado"]    = "OK"
                 r["verificar"] = "CTA 1002"
     return ops_rows
+
+
+def _apply_senebi_gara_externo_compensation(ops_rows, ext_pairs):
+    """Compensa pares OPERBILEXT donde ctte_cli es vacío (contraparte externa sin
+    cuenta Gallo). El lado 'sin CTTE' (SOLO BYMA) y el lado de la contraparte
+    (exceso de BYMA en DIFERENCIA) son las dos caras del mismo trade SENEBI gara
+    y netean a cero. Ambas filas se marcan OK/'SENEBI GARA EXTERNO'.
+    """
+    n_comp = 0
+    for (cparty, esp, mon, sen_cli, concepto, exp_imp) in ext_pairs:
+        sen_cp = "V" if sen_cli == "C" else "C"
+        row_empty = next(
+            (r for r in ops_rows
+             if r["ctte"] == "" and r["especie"] == esp and r["moneda"] == mon
+             and r["sentido"] == sen_cli and r["concepto"] == concepto
+             and abs(r["imp_b"] - exp_imp) <= TOL),
+            None,
+        )
+        row_cp = next(
+            (r for r in ops_rows
+             if r["ctte"] == cparty and r["especie"] == esp and r["moneda"] == mon
+             and r["sentido"] == sen_cp and r["concepto"] == concepto
+             and abs(r["dif_imp"] - exp_imp) <= TOL),
+            None,
+        )
+        if row_empty:
+            row_empty["estado"]    = "OK"
+            row_empty["verificar"] = "SENEBI GARA EXTERNO"
+            n_comp += 1
+        if row_cp:
+            row_cp["estado"]    = "OK"
+            row_cp["verificar"] = "SENEBI GARA EXTERNO"
+            n_comp += 1
+    return ops_rows, n_comp
+
+
+def _apply_senebi_nogara_compensation(ops_rows, snb_keys_g):
+    """Detecta SENEBI bilateral no garantizado: boletos Gallo (CRCN/VRCN) sin
+    contraparte BYMA que se compensan entre sí (compras = ventas por especie/
+    moneda/concepto). Estos back-to-back no-gara se marcan OK/SENEBI NO GARA
+    y se excluyen de la hoja Diferencias a Verificar.
+    """
+    candidatas = [r for r in ops_rows
+                  if r["estado"] == "SOLO GALLO"
+                  and (r["ctte"], r["especie"], r["moneda"],
+                       r["sentido"], r["concepto"]) in snb_keys_g]
+    grupos = defaultdict(lambda: {"C": 0., "V": 0., "rows": []})
+    for r in candidatas:
+        key = (r["especie"], r["moneda"], r["concepto"])
+        grupos[key][r["sentido"]] += r["vn_g"]
+        grupos[key]["rows"].append(r)
+    compensadas = 0
+    for key, g in grupos.items():
+        if abs(g["C"] - g["V"]) <= TOL:
+            for r in g["rows"]:
+                r["estado"]    = "OK"
+                r["verificar"] = "SENEBI NO GARA"
+            compensadas += len(g["rows"])
+    return ops_rows, compensadas
 
 
 # ── Agregados por moneda ───────────────────────────────────────────────────────
@@ -709,6 +827,12 @@ def _write_control_999(wb, agg, ap_saldos, ap_extras, ap_filename, process_date)
             r = _emit_row_999(ws, r, "  CI - Contado Inmediato",
                               ci_b, ci_g, "liquida hoy (T+0)")
 
+        # CI Opciones — liquida hoy (siempre ARS, desglosado de CI normal)
+        opc_b, opc_g = neto_buckets([("OPC", "G")])
+        if abs(opc_b) + abs(opc_g) > TOL:
+            r = _emit_row_999(ws, r, "  CI - Opciones",
+                              opc_b, opc_g, "opciones de prima - liquida hoy")
+
         # CI TRADING INTRADAY — liquida hoy
         ti_ci_b, ti_ci_g = neto_buckets([("TI_CI", "G")])
         if abs(ti_ci_b) + abs(ti_ci_g) > TOL:
@@ -721,9 +845,9 @@ def _write_control_999(wb, agg, ap_saldos, ap_extras, ap_filename, process_date)
             r = _emit_row_999(ws, r, "  CAU - Cauciones (apertura/capital)",
                               cau_b, cau_g, "apertura - capital hoy")
 
-        # SALDO FINAL DIARIO = Saldo AP + CI + CI_TI + CAU
-        total_hoy_b = ci_b + ti_ci_b + cau_b
-        total_hoy_g = ci_g + ti_ci_g + cau_g
+        # SALDO FINAL DIARIO = Saldo AP + CI + OPC + CI_TI + CAU
+        total_hoy_b = ci_b + opc_b + ti_ci_b + cau_b
+        total_hoy_g = ci_g + opc_g + ti_ci_g + cau_g
         if saldo_inicio is not None:
             saldo_final_b = saldo_inicio + total_hoy_b
             saldo_final_g = saldo_inicio + total_hoy_g
@@ -857,7 +981,8 @@ def _write_currency_sheet(wb, code, agg_code, process_date):
 def _build_verification_rows(ops_rows, cau_rows):
     out = []
     for r in ops_rows:
-        if r["estado"] == "OK" and not r["verificar"]:
+        # Excluir filas OK sin verificar, y las compensadas (SENEBI NO GARA / SENEBI GARA EXTERNO)
+        if r["estado"] == "OK" and r["verificar"] in ("", "SENEBI NO GARA", "SENEBI GARA EXTERNO"):
             continue
         if r["estado"] == "TRADING INTRADAY":
             continue
@@ -1046,7 +1171,8 @@ def _write_mav_sheet(ws, mav_rows):
 
 # ── Hoja Resumen Ope-Titulos ───────────────────────────────────────────────────
 
-def _write_res(ws, ops_rows, cr, tr, mav_rows, analisis_1002, arancel_alerts, process_date):
+def _write_res(ws, ops_rows, cr, tr, mav_rows, analisis_1002, arancel_alerts, process_date,
+               n_senebi_nogara=0, n_senebi_gara_ext=0):
     ws.column_dimensions["A"].width = 24
     ws.column_dimensions["B"].width = 12
     for col in "CDEFGHIJK":
@@ -1109,6 +1235,32 @@ def _write_res(ws, ops_rows, cr, tr, mav_rows, analisis_1002, arancel_alerts, pr
     ws.cell(row, 2, len(mav_rows)).fill = _fl(C_BLUE)
     row += 2
 
+    # SENEBI NO GARA — informacional
+    if n_senebi_nogara:
+        label_sng = f"SENEBI NO GARA: {n_senebi_nogara} fila(s) back-to-back (neto=0, excluidas de Diferencias)"
+        ws.cell(row, 1, label_sng).fill = _fl(C_GREEN)
+        ws.cell(row, 1).font = Font(bold=True)
+        ws.cell(row, 2, n_senebi_nogara).fill = _fl(C_GREEN)
+        ws.cell(row, 2).font = Font(bold=True)
+        ws.column_dimensions["A"].width = max(ws.column_dimensions["A"].width,
+                                              len(label_sng) + 2)
+        row += 1
+
+    # SENEBI GARA EXTERNO — informacional
+    if n_senebi_gara_ext:
+        label_sge = (f"SENEBI GARA EXTERNO: {n_senebi_gara_ext} fila(s) "
+                     f"(contraparte sin cuenta Gallo, neto=0, excluidas de Diferencias)")
+        ws.cell(row, 1, label_sge).fill = _fl(C_GREEN)
+        ws.cell(row, 1).font = Font(bold=True)
+        ws.cell(row, 2, n_senebi_gara_ext).fill = _fl(C_GREEN)
+        ws.cell(row, 2).font = Font(bold=True)
+        ws.column_dimensions["A"].width = max(ws.column_dimensions["A"].width,
+                                              len(label_sge) + 2)
+        row += 1
+
+    if n_senebi_nogara or n_senebi_gara_ext:
+        row += 1
+
     n_ar   = len(arancel_alerts) if arancel_alerts else 0
     co_ar  = C_RED if n_ar > 0 else C_GREEN
     label_ar = (f"*** ARANCEL EN CUENTA CARTERA PROPIA — {n_ar} boleto(s) ***"
@@ -1166,12 +1318,13 @@ def _write_res(ws, ops_rows, cr, tr, mav_rows, analisis_1002, arancel_alerts, pr
 
 # ── Punto de entrada ──────────────────────────────────────────────────────────
 
-def generar_reporte(dat_file, xls_file, bil_file=None, ap_file=None):
+def generar_reporte(dat_file, xls_file, bil_file=None, ap_file=None, especies_file=None):
     """
-    dat_file : UploadedFile — OPERSECEXT_GARA.DAT
-    xls_file : UploadedFile — CONTBOLE.XLS
-    bil_file : UploadedFile or None — OPERBILEXT_GARA.DAT (opcional)
-    ap_file  : UploadedFile or None — Actual Position DD-MM-AA.xlsx (opcional, para Control 999)
+    dat_file      : UploadedFile — OPERSECEXT_GARA.DAT
+    xls_file      : UploadedFile — CONTBOLE.XLS
+    bil_file      : UploadedFile or None — OPERBILEXT_GARA.DAT (opcional)
+    ap_file       : UploadedFile or None — Actual Position DD-MM-AA.xlsx (opcional, Control 999)
+    especies_file : UploadedFile or None — ESPECIES.XLS (opcional, byma_map GOGLD→GOOGL etc)
 
     Devuelve (BytesIO con Excel, dict resumen).
     """
@@ -1179,11 +1332,17 @@ def generar_reporte(dat_file, xls_file, bil_file=None, ap_file=None):
     xls_bytes = xls_file.read()
     bil_lines = bil_file.read().decode("latin-1").splitlines() if bil_file else []
 
+    # Mapa BYMA→Gallo (excepciones como GOGLD→GOOGL) — opcional
+    byma_map = _load_byma_ticker_map(especies_file) if especies_file else {}
+
     process_date = _detect_process_date(dat_lines)
 
     esp_g, mer_g, cau_g, tra_g, snb_g, mav_g, arancel_alerts = _parse_gallo(xls_bytes)
-    mer_b, cau_b = _parse_byma(dat_lines, esp_g)
-    snb_b = _parse_senebi(bil_lines, esp_g) if bil_lines else {}
+    mer_b, cau_b, opt_esp = _parse_byma(dat_lines, esp_g, byma_map)
+    if bil_lines:
+        snb_b, ext_pairs = _parse_senebi(bil_lines, esp_g, byma_map)
+    else:
+        snb_b, ext_pairs = {}, []
 
     ppt_keys_b = set(mer_b.keys())
     ppt_keys_g = set(mer_g.keys())
@@ -1209,6 +1368,8 @@ def generar_reporte(dat_file, xls_file, bil_file=None, ap_file=None):
     tr    = _compare_tra(tra_g)
     a1002 = _analyze_1002(ops_rows)
     ops_rows = _apply_1002_compensation(ops_rows, a1002)
+    ops_rows, n_senebi_gara_ext = _apply_senebi_gara_externo_compensation(ops_rows, ext_pairs)
+    ops_rows, n_senebi_nogara   = _apply_senebi_nogara_compensation(ops_rows, snb_keys_g)
 
     agg = _build_currency_agg(mer_b, snb_b, cau_b, mer_g, snb_g, cau_g, tra_g, mav_g)
     ver_rows = _build_verification_rows(ops_rows, cr)
@@ -1228,7 +1389,8 @@ def generar_reporte(dat_file, xls_file, bil_file=None, ap_file=None):
     ws_cau = wb.create_sheet("Cauciones")
     ws_tra = wb.create_sheet("Trading Intraday")
     ws_mav = wb.create_sheet("MAV")
-    _write_res(ws_res, ops_rows, cr, tr, mav_g, a1002, arancel_alerts, process_date)
+    _write_res(ws_res, ops_rows, cr, tr, mav_g, a1002, arancel_alerts, process_date,
+               n_senebi_nogara, n_senebi_gara_ext)
     _write_ops_sheet(ws_ops, ops_rows)
     _write_cau_sheet(ws_cau, cr)
     _write_tra_sheet(ws_tra, tr)
@@ -1278,9 +1440,10 @@ def generar_reporte(dat_file, xls_file, bil_file=None, ap_file=None):
                 return sum(ag.get(bk, {}).get("ar_g", 0.) - ag.get(bk, {}).get("ae_g", 0.)
                            for bk in buckets)
             ci_g    = _neto_g_b([("CI", "G"), ("CI", "NG")])
+            opc_g   = _neto_g_b([("OPC", "G")])
             ti_ci_g = _neto_g_b([("TI_CI", "G")])
             cau_g   = _neto_g_b([("CAU", "G")])
-            total_hoy_g = ci_g + ti_ci_g + cau_g
+            total_hoy_g = ci_g + opc_g + ti_ci_g + cau_g
             saldos_finales[code] = {
                 "label":       MON_LABEL[code],
                 "saldo_ini":   si,
@@ -1307,5 +1470,8 @@ def generar_reporte(dat_file, xls_file, bil_file=None, ap_file=None):
         "saldos_finales":      saldos_finales,
         "ap_filename":         ap_filename,
         "n_ver_rows":          len(ver_rows),
+        "n_senebi_nogara":     n_senebi_nogara,
+        "n_senebi_gara_ext":   n_senebi_gara_ext,
+        "n_opt_esp":           len(opt_esp),
     }
     return output, resumen

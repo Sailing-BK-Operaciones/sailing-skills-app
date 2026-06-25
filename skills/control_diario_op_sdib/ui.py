@@ -57,9 +57,12 @@ def render():
         help="Operaciones SENEBI bilateral. Si no hubo SENEBI en el día, se puede omitir.",
     )
 
-    st.subheader("Archivo de referencia")
+    st.subheader("Archivos de referencia")
     contbole_file = shared_or_upload(
         "shared_contbole", "CONTBOLE.XLS", ["xls", "xlsx"], "sdib_contbole"
+    )
+    especies_file = shared_or_upload(
+        "shared_especies", "ESPECIES.XLS", ["xls", "xlsx"], "sdib_especies"
     )
 
     st.subheader("Actual Position del día (opcional — habilita Control 999)")
@@ -99,6 +102,7 @@ def render():
                     xls_file=contbole_file,
                     bil_file=bil_file,
                     ap_file=ap_file,
+                    especies_file=especies_file,
                 )
                 st.session_state["sdib_result"] = {
                     "output":  output,
