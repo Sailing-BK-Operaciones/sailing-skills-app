@@ -40,14 +40,14 @@ GALLO_CAU  = {"CCCD", "CCTE", "TCCD", "TOCT", "CTCD", "CTTD", "CCCP", "CCFP"}
 GALLO_TRAS = {"VTTR", "COTR"}
 GALLO_SNB  = {"CRCN", "VRCN"}
 GALLO_MAV  = {"VCHM", "CCHM"}
-GALLO_OPC  = {"COPR", "VTPR"}   # Opciones (compra/venta de prima) — siempre ARS, siempre T+0
+GALLO_OPC  = {"COPR", "VTPR", "CPTR", "VPTR"}   # Opciones (compra/venta de prima) — siempre ARS, siempre T+0
 
 GALLO_SEN = {
     "CPRA": "C", "CPU$": "C", "CPUC": "C", "CSU$": "C",
     "CRCN": "C", "COPR": "C", "CTCD": "C", "CTTD": "C",
-    "CCHM": "C",
+    "CCHM": "C", "CPTR": "C",
     "VTAS": "V", "VTU$": "V", "VTUC": "V", "VSU$": "V",
-    "VRCN": "V", "VCHM": "V", "VTPR": "V",
+    "VRCN": "V", "VCHM": "V", "VTPR": "V", "VPTR": "V",
     "COTR": "C", "VTTR": "V",
     "CCCD": "V", "CCTE": "V",
     "TCCD": "C", "TOCT": "C",
@@ -59,6 +59,7 @@ GALLO_MON = {
     "CRCN": "Pesos",     "VRCN": "Pesos",
     "VCHM": "Pesos",     "CCHM": "Pesos",
     "COPR": "Pesos",     "VTPR": "Pesos",
+    "CPTR": "Pesos",     "VPTR": "Pesos",
     "CPU$": "DOLAR MEP", "VTU$": "DOLAR MEP",
     "CSU$": "DOLAR MEP", "VSU$": "DOLAR MEP",
     "CTCD": "DOLAR MEP", "CTTD": "DOLAR MEP",
