@@ -64,6 +64,9 @@ def render():
     especies_file = shared_or_upload(
         "shared_especies", "ESPECIES.XLS", ["xls", "xlsx"], "sdib_especies"
     )
+    tabcompb_file = shared_or_upload(
+        "shared_tabcompb", "TABCOMPB.XLS", ["xls", "xlsx"], "sdib_tabcompb"
+    )
 
     st.subheader("Actual Position del día (opcional — habilita Control 999)")
     ap_file = st.file_uploader(
@@ -103,6 +106,7 @@ def render():
                     bil_file=bil_file,
                     ap_file=ap_file,
                     especies_file=especies_file,
+                    tabcompb_file=tabcompb_file,
                 )
                 st.session_state["sdib_result"] = {
                     "output":  output,

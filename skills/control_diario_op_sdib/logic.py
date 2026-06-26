@@ -92,6 +92,33 @@ SEGMENTO_ORDER = {"G": 0, "NG": 1}
 
 # ── Helpers de parseo ──────────────────────────────────────────────────────────
 
+def _load_tabcompb(tabcompb_file):
+    """Lee TABCOMPB.XLS (hoja Tabla_Comprobantes) y devuelve
+    {abrev: {"nombre", "segmento", "status"}}.
+    Cols: 0=Cod, 1=Nombre Operacion, 2=Abrev, 4=Segmento, 5=Status.
+    Sirve para describir comprobantes no clasificados por la skill.
+    """
+    result = {}
+    if tabcompb_file is None:
+        return result
+    try:
+        tabcompb_file.seek(0)
+        wb = xlrd.open_workbook(file_contents=tabcompb_file.read())
+        ws = wb.sheet_by_name("Tabla_Comprobantes")
+    except Exception:
+        return result
+    for r in range(1, ws.nrows):
+        abrev = str(ws.cell_value(r, 2)).strip().strip("'")
+        if not abrev:
+            continue
+        result[abrev] = {
+            "nombre":   str(ws.cell_value(r, 1)).strip().strip("'"),
+            "segmento": str(ws.cell_value(r, 4)).strip().strip("'"),
+            "status":   str(ws.cell_value(r, 5)).strip().strip("'"),
+        }
+    return result
+
+
 def _load_byma_ticker_map(especies_file):
     """Lee ESPECIES.XLS y construye {byma_ticker: (gallo_ticker, moneda)}.
     Hoja Datos_Fijos_Especies: col 9=Norm (Gallo pesos), col 10=Parid (BYMA MEP),
@@ -248,9 +275,12 @@ def _parse_senebi(lines, gallo_esp, byma_map=None):
     return dict(snb), ext_pairs
 
 
-def _parse_gallo(file_bytes):
-    """Parsea CONTBOLE.XLS desde bytes. Devuelve (esp_set, mer, cau, tra, snb, mav, arancel_alerts).
+def _parse_gallo(file_bytes, tabcompb=None):
+    """Parsea CONTBOLE.XLS desde bytes.
+    Devuelve (esp_set, mer, cau, tra, snb, mav, arancel_alerts, pendientes).
     Concepto CI/CN para PPT/SENEBI según Fec_Ope==Fec_Liq (CI) vs Fec_Liq>Fec_Ope (CN).
+    pendientes: boletos con comprobante que la skill NO logra clasificar en ningún
+    bucket (código desconocido o sin sentido/moneda); enriquecidos con TABCOMPB.
     """
     wb = xlrd.open_workbook(file_contents=file_bytes)
     ws = wb.sheet_by_name("Control_de_Boletos")
@@ -261,6 +291,7 @@ def _parse_gallo(file_bytes):
     snb = defaultdict(lambda: [0., 0.])
     mav = []
     arancel_alerts = []
+    pendientes = []
     for i in range(1, ws.nrows):
         op  = str(ws.cell_value(i, 1)).strip()
         raw = ws.cell_value(i, 4)
@@ -286,33 +317,55 @@ def _parse_gallo(file_bytes):
                 "boleto": boleto, "ctte": ctte, "op": op,
                 "esp": esp, "arancel": arancel,
             })
+        clasif = False  # True si el boleto se rutea a algun bucket
         if op in GALLO_CAU:
             mon_cau = GALLO_MON.get(op, "Pesos")
             if op in GALLO_CAU_CAP:
                 cau[(ctte, sen, mon_cau)]["capital"] += imp
             else:
                 cau[(ctte, sen, mon_cau)]["total"] += imp
+            clasif = True
         elif op in GALLO_TRAS:
             if sen and mon:
                 tra[(ctte, esp, mon, sen, concepto_ppt)][0] += vn
                 tra[(ctte, esp, mon, sen, concepto_ppt)][1] += imp
+                clasif = True
         elif op in GALLO_MAV:
             mav.append({"ctte": ctte, "op": op, "esp": esp,
                         "sen": sen or "V", "mon": mon or "Pesos",
                         "vn": vn, "imp": imp})
+            clasif = True
         elif op in GALLO_SNB:
             if sen and mon:
                 snb[(ctte, esp, mon, sen, concepto_ppt)][0] += vn
                 snb[(ctte, esp, mon, sen, concepto_ppt)][1] += imp
+                clasif = True
         elif op in GALLO_OPC:
             # Opciones: siempre ARS, siempre concepto OPC (independiente del plazo)
             if sen and mon:
                 mer[(ctte, esp, mon, sen, "OPC")][0] += vn
                 mer[(ctte, esp, mon, sen, "OPC")][1] += imp
+                clasif = True
         elif sen and mon:
             mer[(ctte, esp, mon, sen, concepto_ppt)][0] += vn
             mer[(ctte, esp, mon, sen, concepto_ppt)][1] += imp
-    return esp_set, dict(mer), dict(cau), dict(tra), dict(snb), mav, arancel_alerts
+            clasif = True
+
+        if not clasif:
+            # Comprobante no clasificado: codigo desconocido o sin sentido/moneda
+            desc = (tabcompb or {}).get(op)
+            pendientes.append({
+                "boleto":   str(ws.cell_value(i, 0)).strip(),
+                "ctte":     ctte,
+                "op":       op,
+                "esp":      esp,
+                "imp":      imp,
+                "vn":       vn,
+                "nombre":   desc["nombre"]   if desc else "(no esta en TABCOMPB)",
+                "segmento": desc["segmento"] if desc else "",
+            })
+    return (esp_set, dict(mer), dict(cau), dict(tra), dict(snb),
+            mav, arancel_alerts, pendientes)
 
 
 # ── Comparadores ──────────────────────────────────────────────────────────────
@@ -743,13 +796,13 @@ def _emit_row_999(ws, r, label, neto_b, neto_g, nota="", is_subtotal=False):
     return r + 1
 
 
-def _write_control_999(wb, agg, ap_saldos, ap_extras, ap_filename, process_date):
+def _write_control_999(wb, agg, ap_saldos, ap_extras, ap_filename, process_date,
+                       arancel_alerts=None, pendientes=None):
     """Hoja Control 999 — saldo proyectado a fin del dia por moneda.
-    Estructura por moneda:
-      SALDO ACTUAL POSITION
-      CI / CI Trading Intraday / CAU   (liquida hoy)
-      SALDO FINAL DIARIO  = Saldo AP + CI + TI_CI + CAU
-      CN / TI plazo T1                  (informacional — liquida mañana)
+    Incluye:
+      - Banner ARANCEL EN CARTERA PROPIA al tope (1000-1003)
+      - Por moneda: SALDO AP -> CI -> OPC -> CI_TI -> CAU -> SALDO FINAL DIARIO -> CN -> TI T1
+      - Pie: OPERACIONES PENDIENTES DE INCLUIR (boletos sin clasificar)
     """
     ws = wb.create_sheet("Control 999")
     ws.sheet_view.showGridLines = False
@@ -770,7 +823,41 @@ def _write_control_999(wb, agg, ap_saldos, ap_extras, ap_filename, process_date)
                        f"Movimientos del dia desde OPERSECEXT/OPERBILEXT y CONTBOLE")
     c2.font = Font(italic=True, size=9, color="595959")
 
+    # Banner ARANCEL al tope (movido desde Resumen Ope-Titulos)
+    n_ar = len(arancel_alerts) if arancel_alerts else 0
+    co_ar = C_RED if n_ar > 0 else C_GREEN
+    label_ar = (f"*** ARANCEL EN CUENTA CARTERA PROPIA — {n_ar} boleto(s) ***"
+                if n_ar > 0 else "SIN ARANCEL EN CUENTAS CARTERA PROPIA (1000-1003)")
+    ws.merge_cells("A3:D3")
+    c_ar = ws.cell(row=3, column=1, value=label_ar)
+    c_ar.fill = _fl(co_ar)
+    c_ar.font = Font(bold=True, color="FFFFFF" if n_ar > 0 else "000000")
+    c_ar.alignment = Alignment(horizontal="center", vertical="center")
+    cnt_ar = ws.cell(row=3, column=5, value=n_ar)
+    cnt_ar.fill = _fl(co_ar)
+    cnt_ar.font = Font(bold=True, color="FFFFFF" if n_ar > 0 else "000000")
+    cnt_ar.alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[3].height = 20
     r = 4
+    if arancel_alerts:
+        hdrs_ar = ["Boleto", "CTTE", "Operacion", "Especie", "Arancel"]
+        for c, h in enumerate(hdrs_ar, 1):
+            cell = ws.cell(row=r, column=c, value=h)
+            cell.font = Font(bold=True)
+            cell.fill = _fl("D9D9D9")
+        r += 1
+        for a in arancel_alerts:
+            ws.cell(row=r, column=1, value=a["boleto"])
+            ws.cell(row=r, column=2, value=a["ctte"])
+            ws.cell(row=r, column=3, value=a["op"])
+            ws.cell(row=r, column=4, value=a["esp"])
+            cell_ar = ws.cell(row=r, column=5, value=a["arancel"])
+            cell_ar.number_format = NUM_FMT
+            cell_ar.fill = _fl(C_RED)
+            cell_ar.font = Font(bold=True, color="FFFFFF")
+            r += 1
+        r += 1  # fila en blanco antes de las monedas
+
     for code in ("ARS", "USD_MEP", "USD_CABLE"):
         ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=5)
         c = ws.cell(row=r, column=1, value=MON_TITLE[code])
@@ -872,7 +959,50 @@ def _write_control_999(wb, agg, ap_saldos, ap_extras, ap_filename, process_date)
 
         r += 2
 
-    for i, w in enumerate([44, 22, 22, 20, 32], 1):
+    # ── Operaciones pendientes de incluir en reporte (comprobantes sin clasificar)
+    r += 1
+    n_pend = len(pendientes) if pendientes else 0
+    co_pend = C_RED if n_pend > 0 else C_GREEN
+    label_pend = (f"*** OPERACIONES PENDIENTES DE INCLUIR EN REPORTE — {n_pend} boleto(s) ***"
+                  if n_pend > 0
+                  else "TODOS LOS COMPROBANTES DEL CONTBOLE FUERON IDENTIFICADOS")
+    ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=5)
+    c_p = ws.cell(row=r, column=1, value=label_pend)
+    c_p.fill = _fl(co_pend)
+    c_p.font = Font(bold=True, color="FFFFFF" if n_pend > 0 else "000000")
+    c_p.alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[r].height = 20
+    r += 1
+    if pendientes:
+        sub = ws.cell(row=r, column=1,
+                      value="Comprobante no reconocido por la skill — revisar y agregar al "
+                            "mapeo (GALLO_OPC / GALLO_SEN / GALLO_MON segun corresponda).")
+        sub.font = Font(italic=True, size=9, color="595959")
+        r += 1
+        hdrs_p = ["Boleto", "CTTE", "Comprob.", "Descripcion (TABCOMPB)",
+                  "Especie", "Importe", "VN", "Segmento"]
+        for c, h in enumerate(hdrs_p, 1):
+            cell = ws.cell(row=r, column=c, value=h)
+            cell.font = Font(bold=True)
+            cell.fill = _fl("D9D9D9")
+            cell.border = _border()
+        r += 1
+        for p in pendientes:
+            ws.cell(row=r, column=1, value=p["boleto"])
+            ws.cell(row=r, column=2, value=p["ctte"])
+            cc = ws.cell(row=r, column=3, value=p["op"])
+            cc.fill = _fl(C_RED); cc.font = Font(bold=True, color="FFFFFF")
+            ws.cell(row=r, column=4, value=p["nombre"])
+            ws.cell(row=r, column=5, value=p["esp"])
+            ci = ws.cell(row=r, column=6, value=p["imp"]); ci.number_format = NUM_FMT
+            cv = ws.cell(row=r, column=7, value=p["vn"]);  cv.number_format = NUM_FMT
+            ws.cell(row=r, column=8, value=p["segmento"])
+            for c in range(1, 9):
+                ws.cell(row=r, column=c).border = _border()
+            r += 1
+
+    # Anchos (cols 1-5 son las de moneda; 6-8 extras de pendientes)
+    for i, w in enumerate([44, 22, 22, 26, 32, 18, 14, 22], 1):
         ws.column_dimensions[get_column_letter(i)].width = w
     ws.freeze_panes = "A4"
     return ws
@@ -1262,32 +1392,8 @@ def _write_res(ws, ops_rows, cr, tr, mav_rows, analisis_1002, arancel_alerts, pr
     if n_senebi_nogara or n_senebi_gara_ext:
         row += 1
 
-    n_ar   = len(arancel_alerts) if arancel_alerts else 0
-    co_ar  = C_RED if n_ar > 0 else C_GREEN
-    label_ar = (f"*** ARANCEL EN CUENTA CARTERA PROPIA — {n_ar} boleto(s) ***"
-                if n_ar > 0 else "SIN ARANCEL EN CUENTAS CARTERA PROPIA (1000-1003)")
-    ws.cell(row, 1, label_ar).fill = _fl(co_ar)
-    ws.cell(row, 1).font = Font(bold=True, color="FFFFFF" if n_ar > 0 else "000000")
-    ws.cell(row, 2, n_ar).fill = _fl(co_ar)
-    ws.cell(row, 2).font = Font(bold=True)
-    ws.column_dimensions["A"].width = max(ws.column_dimensions["A"].width,
-                                          len(label_ar) + 2)
-    row += 1
-    if arancel_alerts:
-        for c, h in enumerate(["Boleto", "CTTE", "Operacion", "Especie", "Arancel"], 1):
-            cell = ws.cell(row, c, h)
-            cell.font = Font(bold=True); cell.fill = _fl("D9D9D9")
-        row += 1
-        for a in arancel_alerts:
-            ws.cell(row, 1, a["boleto"])
-            ws.cell(row, 2, a["ctte"])
-            ws.cell(row, 3, a["op"])
-            ws.cell(row, 4, a["esp"])
-            cell_ar = ws.cell(row, 5, a["arancel"])
-            cell_ar.number_format = NUM_FMT
-            cell_ar.fill = _fl(C_RED); cell_ar.font = Font(bold=True, color="FFFFFF")
-            row += 1
-    row += 2
+    # (El control de arancel en cuentas de cartera propia 1000-1003 se muestra
+    #  ahora al tope de la hoja Control 999.)
 
     if analisis_1002:
         ws.cell(row, 1, "ANALISIS CTA 1002").font = _hf()
@@ -1319,13 +1425,15 @@ def _write_res(ws, ops_rows, cr, tr, mav_rows, analisis_1002, arancel_alerts, pr
 
 # ── Punto de entrada ──────────────────────────────────────────────────────────
 
-def generar_reporte(dat_file, xls_file, bil_file=None, ap_file=None, especies_file=None):
+def generar_reporte(dat_file, xls_file, bil_file=None, ap_file=None,
+                    especies_file=None, tabcompb_file=None):
     """
     dat_file      : UploadedFile — OPERSECEXT_GARA.DAT
     xls_file      : UploadedFile — CONTBOLE.XLS
     bil_file      : UploadedFile or None — OPERBILEXT_GARA.DAT (opcional)
     ap_file       : UploadedFile or None — Actual Position DD-MM-AA.xlsx (opcional, Control 999)
     especies_file : UploadedFile or None — ESPECIES.XLS (opcional, byma_map GOGLD→GOOGL etc)
+    tabcompb_file : UploadedFile or None — TABCOMPB.XLS (opcional, describe boletos sin clasificar)
 
     Devuelve (BytesIO con Excel, dict resumen).
     """
@@ -1335,10 +1443,13 @@ def generar_reporte(dat_file, xls_file, bil_file=None, ap_file=None, especies_fi
 
     # Mapa BYMA→Gallo (excepciones como GOGLD→GOOGL) — opcional
     byma_map = _load_byma_ticker_map(especies_file) if especies_file else {}
+    # Tabla de comprobantes para describir boletos sin clasificar — opcional
+    tabcompb = _load_tabcompb(tabcompb_file) if tabcompb_file else {}
 
     process_date = _detect_process_date(dat_lines)
 
-    esp_g, mer_g, cau_g, tra_g, snb_g, mav_g, arancel_alerts = _parse_gallo(xls_bytes)
+    (esp_g, mer_g, cau_g, tra_g, snb_g,
+     mav_g, arancel_alerts, pendientes_g) = _parse_gallo(xls_bytes, tabcompb)
     mer_b, cau_b, opt_esp = _parse_byma(dat_lines, esp_g, byma_map)
     if bil_lines:
         snb_b, ext_pairs = _parse_senebi(bil_lines, esp_g, byma_map)
@@ -1381,7 +1492,8 @@ def generar_reporte(dat_file, xls_file, bil_file=None, ap_file=None, especies_fi
     ws_res = wb.active
     ws_res.title = "Resumen Ope-Titulos"
 
-    _write_control_999(wb, agg, ap_saldos, ap_extras, ap_filename, process_date)
+    _write_control_999(wb, agg, ap_saldos, ap_extras, ap_filename, process_date,
+                       arancel_alerts, pendientes_g)
     for code in ("ARS", "USD_MEP", "USD_CABLE"):
         _write_currency_sheet(wb, code, agg[code], process_date)
     _write_verification_sheet(wb, ver_rows, process_date)
@@ -1474,5 +1586,7 @@ def generar_reporte(dat_file, xls_file, bil_file=None, ap_file=None, especies_fi
         "n_senebi_nogara":     n_senebi_nogara,
         "n_senebi_gara_ext":   n_senebi_gara_ext,
         "n_opt_esp":           len(opt_esp),
+        "n_pendientes":        len(pendientes_g),
+        "pendientes_detail":   pendientes_g,
     }
     return output, resumen
