@@ -332,6 +332,7 @@ if not check_login():
 OP_SKILLS = [
     "Archivos Compartidos",
     "Actual Position",
+    "Compras a Liquidar",
     "Consolida SI2 para NASDAQ",
     "Risk Monitoring Client",
     "Control diario OP-SDIB (MA)",
@@ -465,6 +466,9 @@ if skill == "Archivos Compartidos":
     render()
 elif skill == "Actual Position":
     from skills.actual_position.ui import render
+    render()
+elif skill == "Compras a Liquidar":
+    from skills.compras_a_liquidar.ui import render
     render()
 elif skill == "Risk Position":
     from skills.risk_position.ui import render
