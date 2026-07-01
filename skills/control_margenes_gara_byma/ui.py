@@ -66,6 +66,15 @@ def render():
     with col3:
         contbole_file = shared_or_upload("shared_contbole",   "CONTBOLE.XLS",         ["xls", "xlsx"], "cmgb_cont")
 
+    st.subheader("Risk Position BYMA Clearing (opcional)")
+    risk_position_file = st.file_uploader(
+        "table-currentRiskPositions_*.csv — opcional",
+        type=["csv"],
+        key="cmgb_risk",
+        help="CSV de Risk Position descargado de la plataforma BC. Si se sube, "
+             "SALDOS DEUDORES.xlsx se actualiza con Account ID, Importe BC y Diferencia.",
+    )
+
     st.divider()
 
     # ── Validación ────────────────────────────────────────────────────────────
@@ -88,15 +97,16 @@ def render():
         with st.spinner("Procesando posiciones en garantía..."):
             try:
                 from skills.control_margenes_gara_byma.logic import generar_control
-                xlsx_bytes, resumen, advertencias = generar_control(
-                    saldos_file   = saldos_file,
-                    contbole_file = contbole_file,
-                    sagaclte_file = sagaclte_file,
-                    sateclte_file = sateclte_file,
-                    especies_file = especies_file,
-                    tabcompb_file = tabcompb_file,
-                    pc_file       = pc_file,
-                    accounts_file = accounts_file,
+                xlsx_bytes, xlsx_saldos_bytes, resumen, advertencias = generar_control(
+                    saldos_file        = saldos_file,
+                    contbole_file      = contbole_file,
+                    sagaclte_file      = sagaclte_file,
+                    sateclte_file      = sateclte_file,
+                    especies_file      = especies_file,
+                    tabcompb_file      = tabcompb_file,
+                    pc_file            = pc_file,
+                    accounts_file      = accounts_file,
+                    risk_position_file = risk_position_file,
                 )
 
                 # Estado global
@@ -122,15 +132,34 @@ def render():
                     f"ARS {resumen['total_diferencia']:,.0f}"
                 )
 
-                # Descarga
+                if resumen.get("risk_position_loaded"):
+                    st.info(
+                        f"Risk Position BC cargado: {resumen['risk_position_cttes']} "
+                        f"comitente(s) con importe BC.",
+                        icon="🟩",
+                    )
+
+                # Descargas
                 fecha_str = resumen["fecha"]
-                st.download_button(
-                    label=f"⬇ Descargar Control-Posiciones-Gara-{fecha_str}.xlsx",
-                    data=xlsx_bytes,
-                    file_name=f"Control-Posiciones-Gara-{fecha_str}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True,
-                )
+                dc1, dc2 = st.columns(2)
+                with dc1:
+                    st.download_button(
+                        label=f"⬇ Descargar Control-Posiciones-Gara-{fecha_str}.xlsx",
+                        data=xlsx_bytes,
+                        file_name=f"Control-Posiciones-Gara-{fecha_str}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True,
+                        key="cmgb_dl_main",
+                    )
+                with dc2:
+                    st.download_button(
+                        label="⬇ Descargar SALDOS DEUDORES.xlsx (actualizado con BC)",
+                        data=xlsx_saldos_bytes,
+                        file_name="SALDOS DEUDORES.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True,
+                        key="cmgb_dl_saldos",
+                    )
 
                 # Advertencias
                 if advertencias:

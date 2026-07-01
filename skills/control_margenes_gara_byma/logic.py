@@ -5,9 +5,11 @@ compara contra requerimiento y determina CUBIERTO / DESCUBIERTO.
 Adaptado de run_control_posiciones.py para funcionar con archivos en memoria.
 """
 
+import csv
 import io
 import re
 from collections import OrderedDict, defaultdict
+from io import StringIO
 from itertools import groupby
 from datetime import date, datetime
 
@@ -56,6 +58,53 @@ def _apply_header(ws, row_idx, col_idx, value):
     return cell
 
 
+def _load_risk_position(rp_file):
+    """Lee el CSV de risk position (table-currentRiskPositions_*.csv).
+    Retorna:
+      risk_by_ctte   dict ctte -> importe_bc (ARS, ACTUAL)
+      risk_acct_ids  dict ctte -> account_id (extraido del Account string)
+    Si rp_file es None, retorna ({}, {}).
+    """
+    risk_amounts = {}
+    risk_acct_ids = {}
+    if rp_file is None:
+        return risk_amounts, risk_acct_ids
+    try:
+        rp_file.seek(0)
+        content = rp_file.read().decode("utf-8-sig")
+    except Exception:
+        return risk_amounts, risk_acct_ids
+    reader = csv.DictReader(StringIO(content))
+    for row in reader:
+        account_str = row.get("Account", "")
+        m = re.search(r'TM_SAILING ALYC_(\d+)\s*\((\d+)\)', account_str)
+        if not m:
+            continue
+        ctte    = m.group(1)
+        acct_id = m.group(2)
+        risk_acct_ids[ctte] = acct_id
+        if row.get("Position Type", "").strip() != "ACTUAL":
+            continue
+        filter_node = row.get("Market Filter Node", "")
+        # Acepta nodos ARS: ".ARS." (contado) o termina en ".ARS" (cauciones)
+        if "ARS" not in filter_node:
+            continue
+        try:
+            mv = float(str(row.get("Market Value", "0")).replace(",", "."))
+        except (ValueError, TypeError):
+            mv = 0.0
+        if mv != 0.0:
+            amount = mv
+        else:
+            try:
+                sq = float(str(row.get("Short Quantity", "0")).replace(",", "."))
+            except (ValueError, TypeError):
+                sq = 0.0
+            amount = abs(sq)
+        risk_amounts[ctte] = risk_amounts.get(ctte, 0.0) + amount
+    return risk_amounts, risk_acct_ids
+
+
 def _parse_fecha_cell(raw_val, datemode):
     """Convierte valor de celda (serial Excel o string) a date, o None."""
     if not raw_val and raw_val != 0:
@@ -77,25 +126,30 @@ def _parse_fecha_cell(raw_val, datemode):
 
 
 def generar_control(
-    saldos_file,      # SALDOS DEUDORES.xlsx  — obligatorio
-    contbole_file,    # CONTBOLE.XLS           — obligatorio
-    sagaclte_file,    # SAGACLTE.XLS           — shared
-    sateclte_file,    # SATECLTE.XLS           — shared
-    especies_file,    # ESPECIES.XLS           — shared
-    tabcompb_file,    # TABCOMPB.XLS           — shared
-    pc_file,          # PC*.XLS                — shared
-    accounts_file,    # table-accounts_*.csv   — shared
+    saldos_file,           # SALDOS DEUDORES.xlsx      — obligatorio
+    contbole_file,         # CONTBOLE.XLS               — obligatorio
+    sagaclte_file,         # SAGACLTE.XLS               — shared
+    sateclte_file,         # SATECLTE.XLS               — shared
+    especies_file,         # ESPECIES.XLS               — shared
+    tabcompb_file,         # TABCOMPB.XLS               — shared
+    pc_file,               # PC*.XLS                    — shared
+    accounts_file,         # table-accounts_*.csv       — shared
+    risk_position_file=None,  # table-currentRiskPositions_*.csv (opcional, BC)
 ):
     """
     Retorna
     -------
-    xlsx_bytes  : bytes
-    resumen     : dict  (conteos y estados para mostrar en la UI)
-    advertencias: list[str]
+    xlsx_bytes         : bytes
+    xlsx_saldos_bytes  : bytes  (SALDOS DEUDORES.xlsx actualizado con Account ID/Importe BC/Diferencia)
+    resumen            : dict   (conteos y estados para mostrar en la UI)
+    advertencias       : list[str]
     """
     advertencias = []
     FECHA_PROCESO = date.today()
     fecha_str     = FECHA_PROCESO.strftime("%d-%m-%Y")
+
+    # Cargar risk position (opcional)
+    risk_by_ctte, risk_acct_ids = _load_risk_position(risk_position_file)
 
     # ── 1. ESPECIES.XLS ───────────────────────────────────────────────────────
     # También lee col 26 (haircut BYMA API) para construir byma_dict.
@@ -199,11 +253,11 @@ def generar_control(
 
     def _sat_is_cpra(d):
         u = d.upper()
-        return "CPRA" in u or "CPU$" in u or "CCFP" in u
+        return "CPRA" in u or "CPU$" in u or "CCFP" in u or "COMPRA" in u
 
     def _sat_is_vtas(d):
         u = d.upper()
-        return "VTAS" in u or "VTU$" in u or "VTTR" in u
+        return "VTAS" in u or "VTU$" in u or "VTTR" in u or "VENTA" in u
 
     def _sat_add(dest, ctte, field, cod, qty):
         dest.setdefault(ctte, {"vtas": {}, "disponibles": {}, "cpr": {}})
@@ -240,16 +294,21 @@ def generar_control(
         if qty_cv == 0.0:
             continue
         if _sat_is_cpra(desc) or _sat_is_vtas(desc):
-            cod = _last_code_sat.get(ctte)
-            if cod is None:
-                for j in range(i + 1, len(_sat_rows)):
-                    if _sat_rows[j][0] != ctte:
-                        break
-                    m_la = re.match(r'^(\d{5})\s', _sat_rows[j][1])
-                    if m_la:
-                        cod = m_la.group(1)
-                        _last_code_sat[ctte] = cod
-                        break
+            # El codigo va como sufijo en la descripcion (ej. "VTAS 00457", "LETRA CPRA 09387")
+            m_trail = re.search(r'(\d{5})\s*$', desc)
+            if m_trail:
+                cod = m_trail.group(1)
+            else:
+                cod = _last_code_sat.get(ctte)
+                if cod is None:
+                    for j in range(i + 1, len(_sat_rows)):
+                        if _sat_rows[j][0] != ctte:
+                            break
+                        m_la = re.match(r'^(\d{5})\s', _sat_rows[j][1])
+                        if m_la:
+                            cod = m_la.group(1)
+                            _last_code_sat[ctte] = cod
+                            break
             if cod is None:
                 continue
             if _sat_is_cpra(desc) and qty_cv > 0:
@@ -324,6 +383,41 @@ def generar_control(
         })
     comitentes_grouped = [{"ctte": k, "reqs": v} for k, v in _ctte_groups.items()]
     cttes_scope = {c["ctte"] for c in comitentes}
+
+    # ── 8.5. Actualizar SALDOS DEUDORES con datos BC (Account ID + Importe + Dif) ─
+    # Cols: E=Account ID BC | F=Importe BC | H=Diferencia (BC - Gallo)
+    _SD_DATA_ROW = 3
+    for _r in range(_SD_DATA_ROW, ws_saldo.max_row + 1):
+        _cv = ws_saldo.cell(_r, 1).value
+        if _cv is None or isinstance(_cv, str):
+            break
+        _ctte_sd = str(int(_cv))
+        # Col E: Account ID BC (del CSV de risk; fallback a table-accounts)
+        _acc = risk_acct_ids.get(_ctte_sd) or account_id_by_ctte.get(_ctte_sd, "")
+        ws_saldo.cell(_r, 5).value = int(_acc) if _acc and _acc.isdigit() else (_acc or None)
+        ws_saldo.cell(_r, 5).alignment = Alignment(horizontal="center")
+        # Col F: Importe BC | Col H: Diferencia
+        _imp_bc = risk_by_ctte.get(_ctte_sd)
+        _imp_gallo = ws_saldo.cell(_r, 2).value or 0
+        if _imp_bc is not None:
+            ws_saldo.cell(_r, 6).value = _imp_bc
+            ws_saldo.cell(_r, 6).number_format = FMT_PRICE
+            _dif = _imp_bc - float(_imp_gallo)
+            ws_saldo.cell(_r, 8).value = _dif
+            ws_saldo.cell(_r, 8).number_format = FMT_PRICE
+            if abs(_dif) > 0.01:
+                ws_saldo.cell(_r, 8).fill = YELLOW_FILL
+            else:
+                ws_saldo.cell(_r, 8).fill = PatternFill(fill_type=None)
+        else:
+            ws_saldo.cell(_r, 6).value = "SIN DATO BC"
+            ws_saldo.cell(_r, 6).fill  = YELLOW_FILL
+            ws_saldo.cell(_r, 8).value = "N/A"
+
+    # Serializar SALDOS DEUDORES actualizado (segundo output)
+    _buf_saldos = io.BytesIO()
+    wb_saldo.save(_buf_saldos)
+    xlsx_saldos_bytes = _buf_saldos.getvalue()
 
     # ── 9. CONTBOLE.XLS — operaciones CI del día ──────────────────────────────
     ci_ops        = {}   # {ctte: {codigo_cvsa: net_qty}}
@@ -1030,4 +1124,6 @@ def generar_control(
         "total_diferencia": sum(s["diferencia"] for s in summary_data),
     }
 
-    return xlsx_bytes, resumen, advertencias
+    resumen["risk_position_loaded"]   = risk_position_file is not None
+    resumen["risk_position_cttes"]    = len(risk_by_ctte)
+    return xlsx_bytes, xlsx_saldos_bytes, resumen, advertencias
