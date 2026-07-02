@@ -35,6 +35,7 @@ COLORS = {
 
 MERCADOS = {
     999001: 'Mercado Argentino de Valores (MAV)',
+    999002: 'A3 Mercados S.A. Garantía',
     999007: 'U34 Interactive Brokers LLC',
     999012: 'A3 Mercados S.A.',
     999051: 'Banco Comafi',
@@ -43,6 +44,10 @@ MERCADOS = {
 
 HB_REFS    = {'TRANSF.RECIBIDA', 'Solicitado x WEB', 'TRANSFERENCIA RECIBID', 'DOLAR MEP'}
 ECHEQ_REFS = {'ECHEQ A CTTE'}
+# Comparación case-insensitive: en Gallo aparecen variantes de casing
+# (ej. 'Solicitado x Web' vs 'Solicitado x WEB') para la misma referencia.
+HB_REFS_U    = {r.upper() for r in HB_REFS}
+ECHEQ_REFS_U = {r.upper() for r in ECHEQ_REFS}
 
 MESES_ORDER = [
     'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
@@ -180,9 +185,9 @@ def _classify(cpbte, ref, ars_file=True):
 
     if 'ANULADO' in ref_u or ref_u.startswith('ANULA'):
         canal = 'Anulacion'
-    elif ref in ECHEQ_REFS:
+    elif ref_u in ECHEQ_REFS_U:
         canal = 'eCheq'
-    elif ref in HB_REFS:
+    elif ref_u in HB_REFS_U:
         canal = 'Digital'
     else:
         canal = 'Manual'
@@ -828,6 +833,28 @@ def agregar_mes(existing_bytes, mes_name, df_mes, tc_mep, tc_ccl):
                     elif col not in (13, 14):
                         ws.cell(total_row, col).value = sum(vals)
 
+        def _insert_rows_keep_merges(ws, at_row):
+            """Inserta una fila desplazando los rangos mergeados >= at_row.
+            openpyxl NO reubica los merges al insertar filas, por lo que hay
+            que desmergear antes y volver a mergear +1 después. Sin esto, el
+            banner mergeado 'TOTAL ACUMULADO' de Clientes (A:L) queda mal
+            ubicado y tapa los datos del mes nuevo."""
+            saved = []
+            for rng in list(ws.merged_cells.ranges):
+                if rng.min_row >= at_row:
+                    saved.append((rng.min_row, rng.min_col, rng.max_row, rng.max_col))
+                    ws.unmerge_cells(str(rng))
+            ws.insert_rows(at_row)
+            for r1, c1, r2, c2 in saved:
+                ws.merge_cells(start_row=r1 + 1, start_column=c1,
+                               end_row=r2 + 1, end_column=c2)
+
+        def _is_merged_banner(ws, row):
+            """True si la fila de total es un banner mergeado multi-columna
+            (caso Clientes: A:L sin totales numéricos)."""
+            return any(rng.min_row == rng.max_row == row and rng.min_col != rng.max_col
+                       for rng in ws.merged_cells.ranges)
+
         def _insert_section(ws, stats, neto, include_tc, search_from=9):
             tot = _find_total(ws, start=search_from)
             if not tot:
@@ -837,11 +864,14 @@ def agregar_mes(existing_bytes, mes_name, df_mes, tc_mep, tc_ccl):
                  if isinstance(ws.cell(r, 2).value, (int, float))),
                 None
             )
-            ws.insert_rows(tot)
+            banner = _is_merged_banner(ws, tot)   # detectar antes de insertar
+            _insert_rows_keep_merges(ws, tot)
             _copy_style(ws, tot - 1, tot, 14)
             _write_panel_row(ws, tot, stats, neto, include_tc)
             new_tot = tot + 1
-            if data_start:
+            # Solo recalcular totales si la fila de total NO es un banner mergeado
+            # (Clientes usa banner sin números; solo Mercados tiene total numérico).
+            if data_start and not banner:
                 _recalc_total(ws, data_start, tot, new_tot)
             return new_tot
 
