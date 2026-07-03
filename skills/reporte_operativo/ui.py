@@ -113,6 +113,18 @@ def render():
         st.caption(f"Falta para habilitar: {', '.join(faltantes)}")
 
     # ─────────────────────────────────────────────────────────────────────────
+    # Fase de validación previa (opcional pero recomendada)
+    # ─────────────────────────────────────────────────────────────────────────
+    st.subheader("Validación previa")
+    ignorar_criticos = st.checkbox(
+        "Continuar aunque haya alertas 🔴 críticas (códigos sin equivalencia en TABCOMPB)",
+        value=False,
+        key="ro_ignorar_criticos",
+        help="Los boletos con códigos no mapeados igual se excluyen del reporte, "
+             "solo cambia si el botón queda habilitado o no.",
+    )
+
+    # ─────────────────────────────────────────────────────────────────────────
     # Ejecución
     # ─────────────────────────────────────────────────────────────────────────
     if st.button(
@@ -124,11 +136,48 @@ def render():
         with st.spinner(f"Procesando {mes_sel} {int(anio_sel)}..."):
             try:
                 from skills.reporte_operativo.logic import (
-                    load_tabcompb, load_contbole, procesar, actualizar_reporte
+                    load_tabcompb, load_contbole, load_contbole_raw,
+                    validar_contbole, procesar, actualizar_reporte,
                 )
 
                 tabcompb = load_tabcompb(tabcompb_file)
-                rows     = load_contbole(contbole_file)
+
+                # Fase 1: validación previa sobre las filas crudas
+                rows_raw = load_contbole_raw(contbole_file)
+                alertas  = validar_contbole(
+                    rows_raw, tabcompb,
+                    mes_esperado=mes_sel, anio_esperado=int(anio_sel),
+                )
+
+                # Detección de alertas críticas → posible corte
+                n_criticos    = sum(1 for a in alertas if '🔴' in a['severidad'])
+                n_informativos = sum(1 for a in alertas if '🟡' in a['severidad'])
+                n_avisos       = sum(1 for a in alertas if '🔵' in a['severidad'])
+
+                if alertas:
+                    with st.expander(
+                        f"⚠️ {len(alertas)} alerta(s) de validación — "
+                        f"🔴 {n_criticos} · 🟡 {n_informativos} · 🔵 {n_avisos}",
+                        expanded=True,
+                    ):
+                        for a in alertas:
+                            st.markdown(
+                                f"- {a['severidad']} **{a['tipo']}** — `{a['valor']}` · "
+                                f"{a['filas']} fila(s) · ej. boleto `{a['ejemplo']}` "
+                                f"→ *{a['accion']}*"
+                            )
+
+                    if n_criticos > 0 and not ignorar_criticos:
+                        st.error(
+                            f"🔴 {n_criticos} código(s) sin equivalencia en TABCOMPB. "
+                            "Revisá TABCOMPB o marcá el checkbox para continuar."
+                        )
+                        st.stop()
+                else:
+                    st.success("✅ Validación OK — ninguna inconsistencia detectada.")
+
+                # Fase 2: procesamiento normal
+                rows  = load_contbole(contbole_file)
                 datos, advertencias = procesar(
                     rows,
                     tabcompb,
@@ -145,6 +194,7 @@ def render():
                     tc_mep=tc_mep,
                     tc_ccl=tc_ccl if tc_ccl > 0 else 1.0,
                     anio=int(anio_sel),
+                    alertas=alertas,
                 )
 
                 fname = f"Reporte_Operativo_{mes_sel[:3]}{int(anio_sel)}.xlsx"

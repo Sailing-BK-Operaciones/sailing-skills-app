@@ -107,6 +107,8 @@ def load_contbole(file_obj):
         except: imp_bruto  = 0.0
         try:   val_nominal = float(ws.cell_value(r, 8))
         except: val_nominal = 0.0
+        try:   arancel     = float(ws.cell_value(r, 9))
+        except: arancel    = 0.0
         rows.append({
             'boleto':     str(ws.cell_value(r, 0)).strip(),
             'operacion':  str(ws.cell_value(r, 1)).strip(),
@@ -116,10 +118,193 @@ def load_contbole(file_obj):
             'especie':    str(ws.cell_value(r, 6)).strip(),
             'imp_bruto':  imp_bruto,
             'val_nominal': val_nominal,
+            'arancel':    arancel,
             'moneda_raw': str(ws.cell_value(r, 18)).strip(),
             'canal':      str(ws.cell_value(r, 24)).strip(),
         })
     return rows
+
+
+# ─── Carga CONTBOLE con TODAS las filas (incluye subtotales) — para validación ─
+def load_contbole_raw(file_obj):
+    """Lee CONTBOLE.XLS SIN filtrar comitente vacío. Devuelve lista de dicts
+    minimalista para la fase de validación previa.
+    """
+    file_obj.seek(0)
+    wb = xlrd.open_workbook(file_contents=file_obj.read())
+    ws = wb.sheet_by_name('Control_de_Boletos')
+    rows = []
+    for r in range(1, ws.nrows):
+        try:   imp_bruto = float(ws.cell_value(r, 7))
+        except: imp_bruto = 0.0
+        rows.append({
+            'boleto':    str(ws.cell_value(r, 0)).strip(),
+            'operacion': str(ws.cell_value(r, 1)).strip(),
+            'fec_ope':   str(ws.cell_value(r, 2)).strip(),
+            'comitente': str(ws.cell_value(r, 4)).strip(),
+            'nombre':    str(ws.cell_value(r, 5)).strip(),
+            'imp_bruto': imp_bruto,
+            'canal':     str(ws.cell_value(r, 24)).strip(),
+        })
+    return rows
+
+
+# ─── Fase de validación previa (obligatoria) ──────────────────────────────────
+_MERCADO_UNIVERSE   = {"BYMA", "MAV", "A3 - ROFEX", "EXTERIOR"}
+_SUBTOTAL_KEYWORDS  = ("TOTAL", "TOT.", "VENTA", "COMPRA", "PARIDAD")
+
+
+def validar_contbole(rows_raw, tabcompb, mes_esperado=None, anio_esperado=None):
+    """Ejecuta la fase de validación previa sobre las filas crudas del CONTBOLE.
+    Retorna lista de alertas: {tipo, severidad, valor, filas, ejemplo, accion}.
+    """
+    alertas = []
+
+    # 1. Códigos de operación sin equivalencia en TABCOMPB (excluye ANUL)
+    ops_no_map = defaultdict(lambda: {'filas': 0, 'ejemplo': ''})
+    for r in rows_raw:
+        op = r['operacion']
+        if not op or 'ANUL' in op:
+            continue
+        if op not in tabcompb:
+            ops_no_map[op]['filas'] += 1
+            if not ops_no_map[op]['ejemplo']:
+                ops_no_map[op]['ejemplo'] = r['boleto']
+    for op, info in ops_no_map.items():
+        alertas.append({
+            'tipo':      'Código sin equivalencia en TABCOMPB',
+            'severidad': '🔴 Crítico',
+            'valor':     op,
+            'filas':     info['filas'],
+            'ejemplo':   info['ejemplo'],
+            'accion':    'Excluido del reporte',
+        })
+
+    # 2. Valores de MERCADO inesperados
+    mercados_desc = defaultdict(lambda: {'filas': 0, 'ejemplo': ''})
+    for r in rows_raw:
+        op = r['operacion']
+        if not op or 'ANUL' in op or op not in tabcompb:
+            continue
+        merc = tabcompb[op].get('mercado', '').strip()
+        if merc and merc not in _MERCADO_UNIVERSE:
+            mercados_desc[merc]['filas'] += 1
+            if not mercados_desc[merc]['ejemplo']:
+                mercados_desc[merc]['ejemplo'] = r['boleto']
+    for merc, info in mercados_desc.items():
+        alertas.append({
+            'tipo':      'Mercado no reconocido',
+            'severidad': '🟡 Informativo',
+            'valor':     merc,
+            'filas':     info['filas'],
+            'ejemplo':   info['ejemplo'],
+            'accion':    'Procesado sin cambio',
+        })
+
+    # 3. Segmentos sin TC determinable (raro — se pesifica como ARS)
+    segs_ambiguos = defaultdict(lambda: {'filas': 0, 'ejemplo': ''})
+    for r in rows_raw:
+        op = r['operacion']
+        if not op or 'ANUL' in op or op not in tabcompb:
+            continue
+        seg = tabcompb[op].get('segmento', '').strip().upper()
+        if 'CABLE' in seg and 'MEP' in seg:
+            segs_ambiguos[seg]['filas'] += 1
+            if not segs_ambiguos[seg]['ejemplo']:
+                segs_ambiguos[seg]['ejemplo'] = r['boleto']
+    for seg, info in segs_ambiguos.items():
+        alertas.append({
+            'tipo':      'Segmento ambiguo (contiene CABLE y MEP)',
+            'severidad': '🟡 Informativo',
+            'valor':     seg,
+            'filas':     info['filas'],
+            'ejemplo':   info['ejemplo'],
+            'accion':    'Pesificado como AR$',
+        })
+
+    # 4. Filas con Comitente vacío que no son subtotales
+    for r in rows_raw:
+        if r['comitente']:
+            continue
+        nombre_upper = r['nombre'].upper()
+        if any(kw in nombre_upper for kw in _SUBTOTAL_KEYWORDS):
+            continue  # es un subtotal esperado
+        # Fila sin comitente y sin keyword de subtotal → sospechosa
+        alertas.append({
+            'tipo':      'Fila sin Comitente que no parece subtotal',
+            'severidad': '🔵 Aviso',
+            'valor':     r['nombre'] or '(sin nombre)',
+            'filas':     1,
+            'ejemplo':   r['boleto'] or f"op={r['operacion']}",
+            'accion':    'Excluida del reporte (no tiene comitente)',
+        })
+
+    # 5. Canales no reconocidos (los que no están en HB_CANALS y no son vacíos)
+    canales_raros = defaultdict(lambda: {'filas': 0, 'ejemplo': ''})
+    for r in rows_raw:
+        if not r['comitente']:
+            continue
+        c = r['canal']
+        if c and c not in HB_CANALS:
+            # Ver si es un valor "raro" nunca visto — usamos un set predefinido de canales manuales
+            # comunes para NO alertar. Si el canal contiene solo letras y no matcha nada conocido,
+            # se reporta como aviso.
+            if c.upper() not in {'MANUAL', 'IT', 'PHONE', 'FAX', 'PRE', 'BB', 'BT', 'EM', 'BLB', ''}:
+                canales_raros[c]['filas'] += 1
+                if not canales_raros[c]['ejemplo']:
+                    canales_raros[c]['ejemplo'] = r['boleto']
+    for c, info in canales_raros.items():
+        alertas.append({
+            'tipo':      'Canal no reconocido (fallback IT Manual)',
+            'severidad': '🟡 Informativo',
+            'valor':     c,
+            'filas':     info['filas'],
+            'ejemplo':   info['ejemplo'],
+            'accion':    'Mapeado como IT Manual',
+        })
+
+    # 6. Fechas fuera del mes/año declarado
+    if mes_esperado and anio_esperado:
+        mes_idx = MESES_ORDER.index(mes_esperado) + 1  # 1-based
+        anio_yy = int(str(anio_esperado)[-2:])
+        fuera_rango = 0
+        ejemplo = ''
+        rango_min = rango_max = None
+        for r in rows_raw:
+            if not r['comitente']:
+                continue
+            d_str = r['fec_ope']
+            d_obj = None
+            for fmt in ('%d/%m/%y', '%d/%m/%Y', '%Y-%m-%d %H:%M:%S'):
+                try:
+                    d_obj = datetime.strptime(d_str, fmt).date()
+                    break
+                except Exception:
+                    pass
+            if d_obj is None:
+                continue
+            # Actualizar rango
+            if rango_min is None or d_obj < rango_min: rango_min = d_obj
+            if rango_max is None or d_obj > rango_max: rango_max = d_obj
+            # Chequear match mes/año
+            if d_obj.month != mes_idx or d_obj.year not in (int(anio_esperado), 2000 + anio_yy):
+                fuera_rango += 1
+                if not ejemplo:
+                    ejemplo = r['boleto']
+        if fuera_rango > 0:
+            rango_txt = ''
+            if rango_min and rango_max:
+                rango_txt = f" (rango detectado: {rango_min:%d/%m/%y} → {rango_max:%d/%m/%y})"
+            alertas.append({
+                'tipo':      'Fecha fuera del mes/año declarado',
+                'severidad': '🔵 Aviso',
+                'valor':     f"{mes_esperado} {anio_esperado}{rango_txt}",
+                'filas':     fuera_rango,
+                'ejemplo':   ejemplo,
+                'accion':    'Procesadas de todos modos',
+            })
+
+    return alertas
 
 
 # ─── Pesificación ──────────────────────────────────────────────────────────────
@@ -176,6 +361,9 @@ def procesar(rows, tabcompb, tc_mep, tc_ccl):
     monto_ars = monto_mep = monto_cable = 0.0
     hb_ars = hb_mep = 0.0
     man_ars = man_mep = man_cable = 0.0
+    # Aranceles: solo clientes (cartera propia no genera arancel).
+    # Se acumulan en la moneda nativa del boleto según segmento (idéntico a get_tc).
+    arancel_ars = arancel_mep = arancel_cable = 0.0
     canal_hb = {'WEB': [0, 0.0, 0.0], 'APP': [0, 0.0, 0.0], 'MgW': [0, 0.0, 0.0]}
     cnt_c   = Counter(); monto_c = defaultdict(float)
     mep_c   = defaultdict(float); cable_c = defaultdict(float); nom_c = {}
@@ -189,6 +377,12 @@ def procesar(rows, tabcompb, tc_mep, tc_ccl):
         monto_ars += m
         if ml == 'Dolar MEP':   monto_mep   += u
         if ml == 'Dolar CABLE': monto_cable += u
+
+        # Aranceles: acumular en moneda nativa según segmento
+        _ar = r.get('arancel', 0.0) or 0.0
+        if ml == 'Dolar MEP':      arancel_mep   += _ar
+        elif ml == 'Dolar CABLE':  arancel_cable += _ar
+        else:                      arancel_ars   += _ar
 
         c = r['canal']
         if c in HB_CANALS:
@@ -245,6 +439,7 @@ def procesar(rows, tabcompb, tc_mep, tc_ccl):
         'monto_ars': monto_ars, 'monto_mep': monto_mep, 'monto_cable': monto_cable,
         'hb_ars': hb_ars, 'hb_mep': hb_mep,
         'man_ars': man_ars, 'man_mep': man_mep, 'man_cable': man_cable,
+        'arancel_ars': arancel_ars, 'arancel_mep': arancel_mep, 'arancel_cable': arancel_cable,
         'canal_hb':   canal_hb,
         'top_cant':   cnt_c.most_common(20),
         'top_monto':  sorted(monto_c.items(), key=lambda x: -x[1])[:20],
@@ -262,8 +457,58 @@ def procesar(rows, tabcompb, tc_mep, tc_ccl):
 
 
 # ─── Update: Panel de Control ──────────────────────────────────────────────────
+def _write_aranceles_header(ws):
+    """Escribe (si no existe) el encabezado del bloque ARANCELES (cols P-S, filas 6-9)."""
+    # Fila 6: banner
+    banner_cell = ws.cell(6, 16)
+    if banner_cell.value == "ARANCELES":
+        return  # ya está
+    banner_cell.value = "ARANCELES"
+    banner_cell.font  = Font(name='Calibri', size=11, bold=True, color='FFFFFF')
+    banner_cell.fill  = PatternFill(fill_type='solid', fgColor=C_DARK)
+    banner_cell.alignment = Alignment(horizontal='center', vertical='center')
+    ws.merge_cells(start_row=6, start_column=16, end_row=6, end_column=19)
+
+    # Fila 7: título
+    title_cell = ws.cell(7, 16)
+    title_cell.value = "ARANCELES GENERADOS"
+    title_cell.font  = Font(name='Calibri', size=10, bold=True, color='FFFFFF')
+    title_cell.fill  = PatternFill(fill_type='solid', fgColor=C_DARK)
+    title_cell.alignment = Alignment(horizontal='center', vertical='center')
+    ws.merge_cells(start_row=7, start_column=16, end_row=7, end_column=19)
+
+    # Fila 8: sub-headers
+    sub1 = ws.cell(8, 16)
+    sub1.value = "En pesos AR$"
+    sub1.font  = Font(name='Calibri', size=9, bold=True, color='FFFFFF')
+    sub1.fill  = PatternFill(fill_type='solid', fgColor=C_BLUE2)
+    sub1.alignment = Alignment(horizontal='center', vertical='center')
+    ws.merge_cells(start_row=8, start_column=16, end_row=8, end_column=17)
+    sub2 = ws.cell(8, 18)
+    sub2.value = "Dato original (en divisa)"
+    sub2.font  = Font(name='Calibri', size=9, bold=True, color='FFFFFF')
+    sub2.fill  = PatternFill(fill_type='solid', fgColor=C_BLUE2)
+    sub2.alignment = Alignment(horizontal='center', vertical='center')
+    ws.merge_cells(start_row=8, start_column=18, end_row=8, end_column=19)
+
+    # Fila 9: headers de columna
+    headers = ["Total Aranceles AR$", "Aranceles AR$", "Aranceles MEP (USD)", "Aranceles USD Cable"]
+    for ci, h in enumerate(headers, 16):
+        cell = ws.cell(9, ci)
+        cell.value = h
+        cell.font  = Font(name='Calibri', size=9, bold=True, color='FFFFFF')
+        cell.fill  = PatternFill(fill_type='solid', fgColor=C_BLUE2)
+        cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+
+    # Anchos
+    for ci, w in [(16, 16), (17, 14), (18, 13), (19, 14)]:
+        ws.column_dimensions[get_column_letter(ci)].width = w
+
+
 def _update_panel(ws, d, mes_name, tc_mep, tc_ccl, row_mes, row_total, fecha_gen):
     ws.cell(3, 1).value = f"Reporte anual acumulativo  |  Generado: {fecha_gen}"
+
+    _write_aranceles_header(ws)
 
     n = d['boletos_analizados']
     hb = d['hb']; man = d['manual']
@@ -282,9 +527,30 @@ def _update_panel(ws, d, mes_name, tc_mep, tc_ccl, row_mes, row_total, fecha_gen
         _set(ws, row_mes, ci, v, bold=True, italic=ital, color=col, numfmt=fmt,
              halign='center' if ci > 1 else 'left')
 
+    # ── Bloque ARANCELES (cols P-S, misma fila que el mes) ────────────────────
+    ar_ars   = d.get('arancel_ars', 0.0)
+    ar_mep   = d.get('arancel_mep', 0.0)
+    ar_cable = d.get('arancel_cable', 0.0)
+    total_ars = ar_ars + ar_mep * (tc_mep or 0) + ar_cable * (tc_ccl or 0)
+
+    # Col P: Total AR$ (pesificado con TC de la propia fila)
+    _set(ws, row_mes, 16, total_ars, bold=True, color=C_BLUE2, numfmt='#,##0.00',
+         halign='right')
+    # Col Q: AR$ nativo (bold, negro)
+    _set(ws, row_mes, 17, ar_ars if ar_ars else None, bold=True, color=C_BLACK,
+         numfmt='#,##0.00', halign='right')
+    # Col R: MEP en USD (cursiva gris)
+    _set(ws, row_mes, 18, ar_mep if ar_mep else None, italic=True, color=C_GREY_L,
+         numfmt='#,##0.00', halign='right')
+    # Col S: Cable en USD (cursiva gris)
+    _set(ws, row_mes, 19, ar_cable if ar_cable else None, italic=True, color=C_GREY_L,
+         numfmt='#,##0.00', halign='right')
+
     # Recalcular TOTAL ACUMULADO leyendo filas previas
     prev_rows = list(range(10, row_mes))
     tot = [0, 0, 0, 0, 0, 0, 0.0, 0.0, 0.0]  # cuentas, btot, bana, anul, hb, man, ars, mep, cable
+    # Acumular tambien aranceles: P, Q, R, S
+    ar_tot = [0.0, 0.0, 0.0, 0.0]
     for pr in prev_rows:
         tot[0] += ws.cell(pr, 2).value  or 0
         tot[1] += ws.cell(pr, 3).value  or 0
@@ -295,10 +561,18 @@ def _update_panel(ws, d, mes_name, tc_mep, tc_ccl, row_mes, row_total, fecha_gen
         tot[6] += ws.cell(pr, 10).value or 0
         tot[7] += ws.cell(pr, 11).value or 0
         tot[8] += ws.cell(pr, 12).value or 0
+        for _oi, _col in enumerate((16, 17, 18, 19)):
+            _v = ws.cell(pr, _col).value
+            if isinstance(_v, (int, float)):
+                ar_tot[_oi] += _v
     tot[0] += d['cuentas'];   tot[1] += d['boletos_totales']
     tot[2] += n;              tot[3] += d['anulados_count']
     tot[4] += hb;             tot[5] += man
     tot[6] += d['monto_ars']; tot[7] += d['monto_mep']; tot[8] += d['monto_cable']
+    ar_tot[0] += total_ars
+    ar_tot[1] += ar_ars
+    ar_tot[2] += ar_mep
+    ar_tot[3] += ar_cable
 
     tot_vals = ['TOTAL ACUMULADO', tot[0], tot[1], tot[2], tot[3],
                 tot[4], None, tot[5], None, tot[6], tot[7], tot[8], None, None]
@@ -311,6 +585,16 @@ def _update_panel(ws, d, mes_name, tc_mep, tc_ccl, row_mes, row_total, fecha_gen
         cell.fill  = PatternFill(fill_type='solid', fgColor=C_DARK)
         cell.alignment = Alignment(horizontal='center' if ci > 1 else 'left', vertical='center')
         if fmt: cell.number_format = fmt
+
+    # Total acumulado del bloque aranceles (cols P-S)
+    ar_fmts = ['#,##0.00', '#,##0.00', '#,##0.00', '#,##0.00']
+    for _oi, _col in enumerate((16, 17, 18, 19)):
+        cell = ws.cell(row_total, _col)
+        cell.value = ar_tot[_oi] if ar_tot[_oi] else None
+        cell.font  = Font(name='Calibri', size=10, bold=True, color='FFFFFF')
+        cell.fill  = PatternFill(fill_type='solid', fgColor=C_DARK)
+        cell.alignment = Alignment(horizontal='right', vertical='center')
+        cell.number_format = ar_fmts[_oi]
 
 
 # ─── Add: Canal Digital vs Manual ─────────────────────────────────────────────
@@ -710,8 +994,68 @@ def _add_detalle(wb, d, mes_short, mes_name, mes_label, anio, tabcompb, fecha_ge
         ws.column_dimensions[get_column_letter(ci)].width = w
 
 
+# ─── Add: hoja ⚠️ Alertas (opcional, se agrega si hay alertas de validación) ─
+_ALERT_SHEET = "⚠️ Alertas"
+
+
+def _add_alertas(wb, alertas, mes_label, fecha_gen):
+    """Crea o actualiza la hoja de alertas al final del workbook.
+    Si ya existe, agrega las nuevas alertas debajo con un separador de mes.
+    """
+    if not alertas:
+        return
+    if _ALERT_SHEET in wb.sheetnames:
+        ws = wb[_ALERT_SHEET]
+        start_row = ws.max_row + 2
+    else:
+        ws = wb.create_sheet(_ALERT_SHEET)
+        ws.sheet_properties.tabColor = "F39C12"
+        _set(ws, 1, 1, "SAILING INVERSIONES", bold=True, size=16, color=C_DARK)
+        _set(ws, 2, 1, "Alertas de validacion", size=11, color=C_PRIME)
+        _set(ws, 3, 1, f"Reporte anual acumulativo  |  Generado: {fecha_gen}",
+             size=9, color=C_GREY)
+        # Fondo amarillo muy suave para toda la hoja
+        for r in range(1, 4):
+            for c in range(1, 7):
+                ws.cell(r, c).fill = PatternFill(fill_type='solid', fgColor='FFF8E1')
+        start_row = 6
+
+    # Banner del mes
+    banner = ws.cell(start_row, 1)
+    banner.value = f"── {mes_label} ──"
+    banner.font  = Font(name='Calibri', size=11, bold=True, color='FFFFFF')
+    banner.fill  = PatternFill(fill_type='solid', fgColor=C_ORANGE)
+    banner.alignment = Alignment(horizontal='center', vertical='center')
+    ws.merge_cells(start_row=start_row, start_column=1, end_row=start_row, end_column=6)
+    start_row += 1
+
+    # Headers
+    headers = ['Tipo', 'Severidad', 'Valor problemático', 'Filas afectadas',
+               'Ejemplo boleto', 'Acción tomada']
+    for ci, h in enumerate(headers, 1):
+        _set(ws, start_row, ci, h, bold=True, color=C_WHITE, bg=C_ORANGE,
+             halign='center')
+
+    # Datos
+    r = start_row
+    for a in alertas:
+        r += 1
+        _set(ws, r, 1, a['tipo'])
+        _set(ws, r, 2, a['severidad'], halign='center')
+        _set(ws, r, 3, str(a['valor']))
+        _set(ws, r, 4, a['filas'], halign='center', numfmt='#,##0')
+        _set(ws, r, 5, a['ejemplo'], halign='center')
+        _set(ws, r, 6, a['accion'])
+
+    # Anchos
+    widths = [40, 14, 30, 14, 16, 30]
+    for ci, w in enumerate(widths, 1):
+        ws.column_dimensions[get_column_letter(ci)].width = w
+
+
 # ─── Función principal ─────────────────────────────────────────────────────────
-def actualizar_reporte(existing_bytes, datos, tabcompb, mes_name, tc_mep, tc_ccl, anio=2026):
+def actualizar_reporte(existing_bytes, datos, tabcompb, mes_name, tc_mep, tc_ccl,
+                       anio=2026, alertas=None):
     """
     Carga el reporte existente (bytes), agrega el mes nuevo y devuelve los bytes actualizados.
     """
@@ -744,15 +1088,21 @@ def actualizar_reporte(existing_bytes, datos, tabcompb, mes_name, tc_mep, tc_ccl
 
     _add_detalle(wb, datos, mes_short, mes_name, mes_label, anio, tabcompb, fecha_gen)
 
-    # Reordenar: hojas fijas primero, luego detalles por mes
+    # Hoja Alertas al final (si hubo alertas de validación)
+    if alertas:
+        _add_alertas(wb, alertas, mes_label, fecha_gen)
+
+    # Reordenar: hojas fijas primero, luego detalles por mes, Alertas al final
     fixed = ['Panel de Control', 'Canal Digital vs Manual', 'Mercado y Segmento',
              'Rankings TOP 20', 'Operaciones Diarias']
-    detail_sheets = [s for s in wb.sheetnames if s not in fixed]
+    detail_sheets = [s for s in wb.sheetnames if s not in fixed and s != _ALERT_SHEET]
     desired = fixed + sorted(
         detail_sheets,
         key=lambda s: next((i for i, m in enumerate(MESES_ORDER)
                             if m[:3].lower() in s.lower()), 99)
     )
+    if _ALERT_SHEET in wb.sheetnames:
+        desired.append(_ALERT_SHEET)
     for name in desired:
         if name in wb.sheetnames:
             current_idx = wb.sheetnames.index(name)
