@@ -118,12 +118,24 @@ def render():
             f"Fecha {resumen['fecha']}"
         )
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Deudores",          resumen["n_deudores"])
-    c2.metric("Compras OPEVEN",    resumen["n_ops_opeven"])
-    c3.metric("Compras CI",        resumen["n_ops_ci"])
-    c4.metric("Total a cubrir",    f"{resumen['total_compras']:,.2f}")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Deudores",       resumen["n_deudores"])
+    c2.metric("Compras OPEVEN", resumen["n_ops_opeven"])
+    c3.metric("Compras CI",     resumen["n_ops_ci"])
 
+    # Totales por moneda
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("OPEVEN ARS",   f"{resumen['total_opeven_ars']:,.2f}")
+    m2.metric("OPEVEN MEP",   f"USD {resumen['total_opeven_mep']:,.2f}")
+    m3.metric("OPEVEN Cable", f"USD {resumen['total_opeven_cable']:,.2f}")
+    m4.metric("CI (ARS)",     f"{resumen['total_ci']:,.2f}")
+
+    if resumen.get("cttes_con_usd"):
+        st.warning(
+            f"Comitentes con compras en USD (MEP/Cable): "
+            f"{', '.join(resumen['cttes_con_usd'])}",
+            icon="💵",
+        )
     if resumen["cttes_con_ci"]:
         st.warning(
             f"Comitentes con compras CI hoy (T+0): "
@@ -133,11 +145,17 @@ def render():
 
     with st.expander(f"Ver detalle por comitente ({resumen['n_deudores']})"):
         for d in resumen["detalle_deudores"]:
-            ci_flag = " · **CI HOY**" if d["ctte"] in resumen["cttes_con_ci"] else ""
+            flags = []
+            if d["ctte"] in resumen.get("cttes_con_usd", []): flags.append("**USD**")
+            if d["ctte"] in resumen["cttes_con_ci"]:          flags.append("**CI HOY**")
+            flag_str = " · " + " · ".join(flags) if flags else ""
             st.markdown(
                 f"- **{d['ctte']}** · {d['nombre']} · "
                 f"Deudor: `{d['saldo_deudor']:,.2f}` · "
-                f"Compras: `{d['total']:,.2f}`{ci_flag}"
+                f"ARS: `{d['opeven_ars']:,.2f}` · "
+                f"MEP: `{d['opeven_mep']:,.2f}` · "
+                f"Cable: `{d['opeven_cable']:,.2f}` · "
+                f"CI: `{d['total_ci']:,.2f}`{flag_str}"
             )
 
     # ── Descarga ──────────────────────────────────────────────────────────────
