@@ -118,17 +118,26 @@ def render():
             f"Fecha {resumen['fecha']}"
         )
 
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("Deudores",       resumen["n_deudores"])
     c2.metric("Compras OPEVEN", resumen["n_ops_opeven"])
     c3.metric("Compras CI",     resumen["n_ops_ci"])
+    c4.metric("Ventas OPEVEN",  resumen.get("n_ops_venta", 0))
 
-    # Totales por moneda
+    # Totales COMPRAS por moneda
+    st.markdown("**Compras OPEVEN por moneda**")
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("OPEVEN ARS",   f"{resumen['total_opeven_ars']:,.2f}")
-    m2.metric("OPEVEN MEP",   f"USD {resumen['total_opeven_mep']:,.2f}")
-    m3.metric("OPEVEN Cable", f"USD {resumen['total_opeven_cable']:,.2f}")
-    m4.metric("CI (ARS)",     f"{resumen['total_ci']:,.2f}")
+    m1.metric("Compras ARS",   f"{resumen['total_opeven_ars']:,.2f}")
+    m2.metric("Compras MEP",   f"USD {resumen['total_opeven_mep']:,.2f}")
+    m3.metric("Compras Cable", f"USD {resumen['total_opeven_cable']:,.2f}")
+    m4.metric("CI (ARS)",      f"{resumen['total_ci']:,.2f}")
+
+    # Totales VENTAS por moneda
+    st.markdown("**Ventas OPEVEN por moneda**")
+    v1, v2, v3 = st.columns(3)
+    v1.metric("Ventas ARS",   f"{resumen.get('total_venta_ars', 0):,.2f}")
+    v2.metric("Ventas MEP",   f"USD {resumen.get('total_venta_mep', 0):,.2f}")
+    v3.metric("Ventas Cable", f"USD {resumen.get('total_venta_cable', 0):,.2f}")
 
     if resumen.get("cttes_con_usd"):
         st.warning(
@@ -142,20 +151,30 @@ def render():
             f"{', '.join(resumen['cttes_con_ci'])}",
             icon="🟧",
         )
+    if resumen.get("cttes_con_venta"):
+        st.info(
+            f"Comitentes con ventas a vencer: "
+            f"{', '.join(resumen['cttes_con_venta'])}",
+            icon="🟩",
+        )
 
     with st.expander(f"Ver detalle por comitente ({resumen['n_deudores']})"):
         for d in resumen["detalle_deudores"]:
             flags = []
-            if d["ctte"] in resumen.get("cttes_con_usd", []): flags.append("**USD**")
-            if d["ctte"] in resumen["cttes_con_ci"]:          flags.append("**CI HOY**")
+            if d["ctte"] in resumen.get("cttes_con_usd", []):   flags.append("**USD**")
+            if d["ctte"] in resumen["cttes_con_ci"]:            flags.append("**CI HOY**")
+            if d["ctte"] in resumen.get("cttes_con_venta", []): flags.append("**VTA**")
             flag_str = " · " + " · ".join(flags) if flags else ""
             st.markdown(
                 f"- **{d['ctte']}** · {d['nombre']} · "
-                f"Deudor: `{d['saldo_deudor']:,.2f}` · "
-                f"ARS: `{d['opeven_ars']:,.2f}` · "
+                f"Deudor: `{d['saldo_deudor']:,.2f}`{flag_str}\n"
+                f"    - Compras — ARS: `{d['opeven_ars']:,.2f}` · "
                 f"MEP: `{d['opeven_mep']:,.2f}` · "
                 f"Cable: `{d['opeven_cable']:,.2f}` · "
-                f"CI: `{d['total_ci']:,.2f}`{flag_str}"
+                f"CI: `{d['total_ci']:,.2f}`\n"
+                f"    - Ventas — ARS: `{d.get('venta_ars', 0):,.2f}` · "
+                f"MEP: `{d.get('venta_mep', 0):,.2f}` · "
+                f"Cable: `{d.get('venta_cable', 0):,.2f}`"
             )
 
     # ── Descarga ──────────────────────────────────────────────────────────────

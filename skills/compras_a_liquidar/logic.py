@@ -18,18 +18,20 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
 UMBRAL_DEUDOR = 99_900.0
 
-# Conceptos de compra a vencer y su moneda:
-#   CPRA = compra pesos ARS      → importe en 'Importe Neto'
-#   CPU$ = compra dólar MEP       → importe en 'Dolar' (Importe Neto viene 0)
-#   CPUC = compra dólar Cable     → importe en 'Dolar' (Importe Neto viene 0)
+# Conceptos a vencer y su moneda:
+#   Compras: CPRA = ARS | CPU$ = MEP | CPUC = Cable  (importe en 'Importe Neto' o 'Dolar')
+#   Ventas:  VTAS = ARS | VTU$ = MEP | VTUC = Cable  (importes vienen negativos en OPEVEN)
 COMPRA_CONCEPTOS = {"CPRA": "ARS", "CPU$": "MEP", "CPUC": "Cable"}
-_MON_KEY_OPEVEN  = {"ARS": "opeven_ars", "MEP": "opeven_mep", "Cable": "opeven_cable"}
+VENTA_CONCEPTOS  = {"VTAS": "ARS", "VTU$": "MEP", "VTUC": "Cable"}
+_MON_COMPRA      = {"ARS": "opeven_ars", "MEP": "opeven_mep", "Cable": "opeven_cable"}
+_MON_VENTA       = {"ARS": "venta_ars",  "MEP": "venta_mep",  "Cable": "venta_cable"}
 
 HEADER_FILL   = PatternFill("solid", fgColor="1F4E79")
 HEADER_FONT   = Font(bold=True, color="FFFFFF", size=10)
 SUBTOTAL_FILL = PatternFill("solid", fgColor="D6E4F0")
 SUBTOTAL_FONT = Font(bold=True, size=10)
 ORANGE_FILL   = PatternFill("solid", fgColor="FFE0B2")
+VENTA_FILL    = PatternFill("solid", fgColor="E2EFDA")  # verde claro para ventas
 THIN_BORDER   = Border(
     left=Side(style="thin"), right=Side(style="thin"),
     top=Side(style="thin"),  bottom=Side(style="thin"),
@@ -127,18 +129,22 @@ def generar_reporte(salpeso_file, opeven_file, contbole_file, especies_file):
             nombre = str(row.get("Nombre Comitente", "")).strip()
             deudores[ctte] = {"nombre": nombre, "saldo": saldo}
 
-    # ── 3. OPEVEN → compras (CPRA/CPU$/CPUC con Fec.Liq.) de deudores ────────
+    # ── 3. OPEVEN → compras y ventas (ARS / MEP / Cable) de deudores ─────────
     opeven_rows = _read_xls(opeven_file, "Operaciones_Vencer")
     compras_opeven = []
+    ventas_opeven  = []
     for row in opeven_rows:
         ctte   = _clean_ctte(row.get("Numero", ""))
         concep = str(row.get("Concepto", "")).strip()
         fecliq = str(row.get("Fec.Liq.", "")).strip()
-        if not fecliq or concep not in COMPRA_CONCEPTOS:
+        if not fecliq or ctte not in deudores:
             continue
-        if ctte not in deudores:
+        if concep in COMPRA_CONCEPTOS:
+            moneda, tipo, target = COMPRA_CONCEPTOS[concep], "Compra", compras_opeven
+        elif concep in VENTA_CONCEPTOS:
+            moneda, tipo, target = VENTA_CONCEPTOS[concep], "Venta", ventas_opeven
+        else:
             continue
-        moneda = COMPRA_CONCEPTOS[concep]
         try:
             cantidad = float(row.get("Cantidad", 0) or 0)
             if moneda == "ARS":
@@ -147,10 +153,14 @@ def generar_reporte(salpeso_file, opeven_file, contbole_file, especies_file):
                 importe = float(row.get("Dolar", 0) or 0)
         except (ValueError, TypeError):
             importe = cantidad = 0.0
+        # Ventas vienen negativas en OPEVEN → mostrar magnitud positiva
+        importe  = abs(importe)
+        cantidad = abs(cantidad)
         codigo = str(row.get("Codigo", "")).strip().zfill(5)
-        compras_opeven.append({
+        target.append({
             "ctte":     ctte,
             "nombre":   deudores[ctte]["nombre"],
+            "tipo":     tipo,
             "origen":   "OPEVEN",
             "moneda":   moneda,
             "codigo":   codigo,
@@ -190,6 +200,7 @@ def generar_reporte(salpeso_file, opeven_file, contbole_file, especies_file):
         compras_ci.append({
             "ctte":     ctte,
             "nombre":   deudores[ctte]["nombre"],
+            "tipo":     "Compra",
             "origen":   "CONTBOLE CI",
             "moneda":   "ARS",
             "codigo":   cod_cb,
@@ -203,47 +214,56 @@ def generar_reporte(salpeso_file, opeven_file, contbole_file, especies_file):
             "boleto":   str(row.get("Boleto", "")).strip(),
         })
 
-    # ── 5. Resumen por comitente (split OPEVEN por moneda) ──────────────────
+    # ── 5. Resumen por comitente (compras + ventas por moneda) ──────────────
     resumen = {}
     for c, d in deudores.items():
         resumen[c] = {"nombre": d["nombre"], "saldo_deudor": d["saldo"],
                       "opeven_ars": 0.0, "opeven_mep": 0.0, "opeven_cable": 0.0,
-                      "total_ci": 0.0}
+                      "total_ci": 0.0,
+                      "venta_ars": 0.0,  "venta_mep": 0.0,  "venta_cable": 0.0}
     for op in compras_opeven:
-        resumen[op["ctte"]][_MON_KEY_OPEVEN[op["moneda"]]] += op["importe"]
+        resumen[op["ctte"]][_MON_COMPRA[op["moneda"]]] += op["importe"]
     for op in compras_ci:
         resumen[op["ctte"]]["total_ci"] += op["importe"]
+    for op in ventas_opeven:
+        resumen[op["ctte"]][_MON_VENTA[op["moneda"]]] += op["importe"]
 
-    all_compras = compras_opeven + compras_ci
+    all_ops = compras_opeven + compras_ci + ventas_opeven
 
     # ── 6. Excel ─────────────────────────────────────────────────────────────
     wb = Workbook()
 
-    # Hoja Resumen — 7 cols (ARS + MEP + Cable + CI)
+    # Hoja Resumen — 10 cols (Compras ARS/MEP/Cable + CI + Ventas ARS/MEP/Cable)
     ws_res = wb.active
     ws_res.title = "Resumen"
     _apply_header(ws_res, ["Comitente", "Nombre", "Saldo Deudor",
                             "Compras ARS", "Compras MEP (USD)", "Compras Cable (USD)",
-                            "Compras CI (ARS)"])
+                            "Compras CI (ARS)",
+                            "Ventas ARS", "Ventas MEP (USD)", "Ventas Cable (USD)"])
     for ctte in sorted(resumen.keys()):
         d = resumen[ctte]
         ws_res.append([ctte, d["nombre"], d["saldo_deudor"],
                        d["opeven_ars"], d["opeven_mep"], d["opeven_cable"],
-                       d["total_ci"]])
+                       d["total_ci"],
+                       d["venta_ars"], d["venta_mep"], d["venta_cable"]])
         r = ws_res.max_row
         # Resaltar si tiene compras en dólares (MEP/Cable) o compras CI del día
         tiene_usd = d["opeven_mep"] > 0 or d["opeven_cable"] > 0
         fill = ORANGE_FILL if (d["total_ci"] > 0 or tiene_usd) else None
-        _style_data_row(ws_res, r, money_cols=(3, 4, 5, 6, 7), fill=fill)
+        _style_data_row(ws_res, r, money_cols=(3, 4, 5, 6, 7, 8, 9, 10), fill=fill)
 
-    tot_saldo = sum(d["saldo_deudor"] for d in resumen.values())
-    tot_ars   = sum(d["opeven_ars"]   for d in resumen.values())
-    tot_mep   = sum(d["opeven_mep"]   for d in resumen.values())
-    tot_cable = sum(d["opeven_cable"] for d in resumen.values())
-    tot_ci    = sum(d["total_ci"]     for d in resumen.values())
-    ws_res.append(["", "TOTAL", tot_saldo, tot_ars, tot_mep, tot_cable, tot_ci])
+    tot_saldo   = sum(d["saldo_deudor"] for d in resumen.values())
+    tot_ars     = sum(d["opeven_ars"]   for d in resumen.values())
+    tot_mep     = sum(d["opeven_mep"]   for d in resumen.values())
+    tot_cable   = sum(d["opeven_cable"] for d in resumen.values())
+    tot_ci      = sum(d["total_ci"]     for d in resumen.values())
+    tot_v_ars   = sum(d["venta_ars"]    for d in resumen.values())
+    tot_v_mep   = sum(d["venta_mep"]    for d in resumen.values())
+    tot_v_cable = sum(d["venta_cable"]  for d in resumen.values())
+    ws_res.append(["", "TOTAL", tot_saldo, tot_ars, tot_mep, tot_cable, tot_ci,
+                   tot_v_ars, tot_v_mep, tot_v_cable])
     r = ws_res.max_row
-    for ci in range(1, 8):
+    for ci in range(1, 11):
         cell = ws_res.cell(r, ci)
         cell.font   = SUBTOTAL_FONT
         cell.fill   = SUBTOTAL_FILL
@@ -256,62 +276,74 @@ def generar_reporte(salpeso_file, opeven_file, contbole_file, especies_file):
 
     ws_res.column_dimensions["A"].width = 12
     ws_res.column_dimensions["B"].width = 30
-    for col in ["C", "D", "E", "F", "G"]:
+    for col in ["C", "D", "E", "F", "G", "H", "I", "J"]:
         ws_res.column_dimensions[col].width = 20
     ws_res.freeze_panes = "A2"
     if ws_res.max_row > 2:
-        ws_res.auto_filter.ref = f"A1:G{ws_res.max_row - 1}"
+        ws_res.auto_filter.ref = f"A1:J{ws_res.max_row - 1}"
 
-    # Hoja Detalle — 14 cols (agrega Moneda en pos G)
+    # Hoja Detalle — 15 cols (agrega Tipo en pos D)
     ws_det = wb.create_sheet("Detalle")
     _apply_header(ws_det, [
-        "Comitente", "Nombre", "Saldo Deudor", "Origen",
+        "Comitente", "Nombre", "Saldo Deudor", "Tipo", "Origen",
         "Especie", "ticker", "Moneda", "Cantidad", "Importe",
         "Fec. Liq.", "Nombre Especie", "Concepto", "Fec. Ope.", "Boleto",
     ])
-    for op in sorted(all_compras, key=lambda x: (x["ctte"], x["moneda"], x["origen"], x["fec_liq"])):
+    for op in sorted(all_ops, key=lambda x: (x["ctte"], x["tipo"], x["moneda"], x["origen"], x["fec_liq"])):
         saldo = resumen[op["ctte"]]["saldo_deudor"]
         ws_det.append([
-            op["ctte"],    op["nombre"],  saldo,          op["origen"],
+            op["ctte"],    op["nombre"],  saldo,          op["tipo"],     op["origen"],
             op["codigo"],  op["ticker"],  op["moneda"],   op["cantidad"], op["importe"],
             op["fec_liq"], op["especie"], op["concepto"], op["fec_ope"],  op["boleto"],
         ])
         r = ws_det.max_row
-        # Resaltar compras del día (CI) y compras en dólares (MEP/Cable)
-        fill = ORANGE_FILL if (op["origen"] == "CONTBOLE CI" or op["moneda"] != "ARS") else None
-        _style_data_row(ws_det, r, money_cols=(3, 9), num_cols=(8,), fill=fill)
+        # Ventas → verde claro; compras CI o en dólares (MEP/Cable) → naranja
+        if op["tipo"] == "Venta":
+            fill = VENTA_FILL
+        elif op["origen"] == "CONTBOLE CI" or op["moneda"] != "ARS":
+            fill = ORANGE_FILL
+        else:
+            fill = None
+        _style_data_row(ws_det, r, money_cols=(3, 10), num_cols=(9,), fill=fill)
 
     col_widths = {
-        "A": 12, "B": 30, "C": 18, "D": 14, "E": 10, "F": 12, "G": 8,
-        "H": 14, "I": 18, "J": 12, "K": 35, "L": 12, "M": 12, "N": 10,
+        "A": 12, "B": 30, "C": 18, "D": 8,  "E": 14, "F": 10, "G": 12, "H": 8,
+        "I": 14, "J": 18, "K": 12, "L": 35, "M": 12, "N": 12, "O": 10,
     }
     for col, w in col_widths.items():
         ws_det.column_dimensions[col].width = w
     ws_det.freeze_panes = "A2"
     if ws_det.max_row >= 1:
-        ws_det.auto_filter.ref = f"A1:N{max(ws_det.max_row, 1)}"
+        ws_det.auto_filter.ref = f"A1:O{max(ws_det.max_row, 1)}"
 
     output = BytesIO()
     wb.save(output)
     output.seek(0)
 
-    cttes_con_ci  = sorted({op["ctte"] for op in compras_ci})
-    cttes_con_usd = sorted({op["ctte"] for op in compras_opeven if op["moneda"] != "ARS"})
+    cttes_con_ci    = sorted({op["ctte"] for op in compras_ci})
+    cttes_con_usd   = sorted({op["ctte"] for op in compras_opeven if op["moneda"] != "ARS"})
+    cttes_con_venta = sorted({op["ctte"] for op in ventas_opeven})
     resumen_ui = {
         "fecha":            date.today().strftime("%d-%m-%Y"),
         "n_deudores":       len(deudores),
         "n_ops_opeven":     len(compras_opeven),
         "n_ops_ci":         len(compras_ci),
+        "n_ops_venta":      len(ventas_opeven),
         "total_opeven_ars":   tot_ars,
         "total_opeven_mep":   tot_mep,
         "total_opeven_cable": tot_cable,
         "total_ci":         tot_ci,
+        "total_venta_ars":   tot_v_ars,
+        "total_venta_mep":   tot_v_mep,
+        "total_venta_cable": tot_v_cable,
         "total_deudor":     tot_saldo,
         "cttes_con_ci":     cttes_con_ci,
         "cttes_con_usd":    cttes_con_usd,
+        "cttes_con_venta":  cttes_con_venta,
         "detalle_deudores": sorted(
             [{"ctte": c, **d,
               "total_opeven": d["opeven_ars"] + d["opeven_mep"] + d["opeven_cable"],
+              "total_venta":  d["venta_ars"]  + d["venta_mep"]  + d["venta_cable"],
               "total": d["opeven_ars"] + d["opeven_mep"] + d["opeven_cable"] + d["total_ci"]}
              for c, d in resumen.items()],
             key=lambda x: x["ctte"],
