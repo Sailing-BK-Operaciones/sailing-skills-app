@@ -15,14 +15,27 @@ from __future__ import annotations
 
 import csv
 import io
+import os
 import re
 import datetime as dt
 from io import BytesIO, StringIO
+from pathlib import Path
 
 import pandas as pd
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
+
+# ── Directorio de estado (bundled en el repo, editable en runtime) ────────────
+# baseline_split.csv / estado_diario.csv / asignaciones_byma_broker.csv /
+# movimientos_backdated.csv se leen/escriben desde acá por defecto.
+STATE_DIR = Path(__file__).parent / "state"
+STATE_DIR.mkdir(exist_ok=True)
+
+BASELINE_PATH = STATE_DIR / "baseline_split.csv"
+ESTADO_PATH   = STATE_DIR / "estado_diario.csv"
+DEC_PATH      = STATE_DIR / "asignaciones_byma_broker.csv"
+BD_PATH       = STATE_DIR / "movimientos_backdated.csv"
 
 
 # ── Constantes ────────────────────────────────────────────────────────────────
@@ -178,13 +191,31 @@ def _load_cc(cc_file):
 
 
 # ── CSV state (in / out) ──────────────────────────────────────────────────────
-def _csv_read(uploaded_file, fields):
-    """Devuelve lista de dicts leyendo un CSV UploadedFile (o [] si es None)."""
-    if uploaded_file is None:
+def _csv_read(source, fields):
+    """Devuelve lista de dicts leyendo un CSV UploadedFile, Path o str (o [] si es None).
+    Acepta también rutas del filesystem — devuelve [] si el archivo no existe.
+    """
+    if source is None:
         return []
-    uploaded_file.seek(0)
-    content = uploaded_file.read().decode("utf-8-sig")
+    if isinstance(source, (str, os.PathLike)):
+        p = Path(source)
+        if not p.exists():
+            return []
+        with open(p, encoding="utf-8-sig") as f:
+            return list(csv.DictReader(f))
+    source.seek(0)
+    content = source.read().decode("utf-8-sig")
     return list(csv.DictReader(StringIO(content)))
+
+
+def _csv_write_path(path, rows, fields):
+    """Escribe rows a un archivo CSV en disco."""
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", newline="", encoding="utf-8-sig") as f:
+        w = csv.DictWriter(f, fieldnames=fields)
+        w.writeheader()
+        for r in rows:
+            w.writerow({k: r.get(k, "") for k in fields})
 
 
 def _csv_write(rows, fields) -> bytes:
@@ -395,16 +426,44 @@ def _escribir_baseline_excel(resumen, excluidas, falta_definir, fecha_corte) -> 
 
 
 # ── Modo DIARIO ───────────────────────────────────────────────────────────────
+def get_state_info():
+    """Info descriptiva del estado bundled en disco (para la UI)."""
+    def _stat(p):
+        if not p.exists():
+            return None
+        return {
+            "path":  str(p),
+            "size":  p.stat().st_size,
+            "mtime": dt.datetime.fromtimestamp(p.stat().st_mtime).strftime("%d/%m/%Y %H:%M"),
+        }
+    return {
+        "baseline":     _stat(BASELINE_PATH),
+        "estado":       _stat(ESTADO_PATH),
+        "asignaciones": _stat(DEC_PATH),
+        "backdated":    _stat(BD_PATH),
+    }
+
+
+def read_state_file(kind):
+    """Lee un archivo de estado bundled y devuelve sus bytes (para descargas)."""
+    p = {"baseline": BASELINE_PATH, "estado": ESTADO_PATH,
+         "asignaciones": DEC_PATH, "backdated": BD_PATH}.get(kind)
+    if p and p.exists():
+        return p.read_bytes()
+    return b""
+
+
 def procesar_diario(
-    baseline_csv_file,
     cc_files,                # list of UploadedFile, con .name para extraer CTTE
     tabcompb_file,
     salusd_file            = None,
-    estado_csv_file        = None,
-    asignaciones_csv_file  = None,
-    backdated_csv_file     = None,
+    baseline_csv_file      = None,  # override opcional del baseline en disco
+    estado_csv_file        = None,  # override opcional
+    asignaciones_csv_file  = None,  # override opcional
+    backdated_csv_file     = None,  # override opcional
     decisiones_ui          = None,   # dict {(ctte_str, cpbt, num_str): "BROKER"/"BYMA"}
     fecha_proc             = None,
+    persist_to_disk        = True,   # escribir estado actualizado a STATE_DIR
 ):
     """
     Retorna:
@@ -418,11 +477,12 @@ def procesar_diario(
         fecha_proc = dt.date.today()
 
     mp        = _load_tabcompb(tabcompb_file)
-    baseline  = _load_baseline(baseline_csv_file)
+    # Baseline: primero el override (upload), sino el bundled en disco
+    baseline  = _load_baseline(baseline_csv_file if baseline_csv_file is not None else BASELINE_PATH)
     if not baseline:
         raise ValueError(
-            "El baseline_split.csv está vacío o no tiene formato válido. "
-            "Corré primero el modo BASELINE."
+            "No se encontró baseline_split.csv. Debería estar bundleado en "
+            f"{BASELINE_PATH}. Contactar al admin de la app."
         )
 
     # fecha de corte del baseline (movimientos ESTRICTAMENTE posteriores)
@@ -435,9 +495,9 @@ def procesar_diario(
         raise ValueError("No se pudo parsear la FechaCorte del baseline.")
     ts_cut = pd.Timestamp(cutoff)
 
-    estado_prev              = _load_estado(estado_csv_file)
-    decisiones, dec_records  = _load_decisiones(asignaciones_csv_file)
-    backdated, bd_records    = _load_backdated(backdated_csv_file)
+    estado_prev              = _load_estado(estado_csv_file if estado_csv_file is not None else ESTADO_PATH)
+    decisiones, dec_records  = _load_decisiones(asignaciones_csv_file if asignaciones_csv_file is not None else DEC_PATH)
+    backdated, bd_records    = _load_backdated(backdated_csv_file if backdated_csv_file is not None else BD_PATH)
 
     # Aplicar decisiones vía UI (segunda pasada). Si viene decisiones_ui,
     # las mergea a la memoria.
@@ -595,22 +655,32 @@ def procesar_diario(
 
     # Serializar outputs
     xlsx_bytes    = _escribir_diario_excel(panel, detalle_rows, faltantes, fecha_proc, cutoff)
-    estado_bytes  = _csv_write([
+    estado_rows   = [
         {"Comitente": ct,
          "BROKER":    round(v["BROKER"], 2),
          "BYMA":      round(v["BYMA"], 2),
          "Total":     round(v["Total"], 2),
          "FechaActualizacion": fecha_proc.strftime("%d/%m/%Y")}
         for ct, v in sorted(nuevo_estado.items())
-    ], ESTADO_FIELDS)
-    dec_bytes = _csv_write(
-        [dec_records[k] for k in sorted(dec_records)],
-        DEC_FIELDS,
-    )
-    bd_bytes = _csv_write(
-        [bd_records[k] for k in sorted(bd_records)],
-        BD_FIELDS,
-    )
+    ]
+    dec_rows = [dec_records[k] for k in sorted(dec_records)]
+    bd_rows  = [bd_records[k]  for k in sorted(bd_records)]
+
+    estado_bytes = _csv_write(estado_rows, ESTADO_FIELDS)
+    dec_bytes    = _csv_write(dec_rows,    DEC_FIELDS)
+    bd_bytes     = _csv_write(bd_rows,     BD_FIELDS)
+
+    # Persistir en disco (state/) para que la próxima corrida arranque desde acá.
+    # En Streamlit Cloud persiste durante la vida del container; si el container
+    # se reinicia, vuelve al estado bundleado en el repo.
+    if persist_to_disk:
+        try:
+            _csv_write_path(ESTADO_PATH, estado_rows, ESTADO_FIELDS)
+            _csv_write_path(DEC_PATH,    dec_rows,    DEC_FIELDS)
+            _csv_write_path(BD_PATH,     bd_rows,     BD_FIELDS)
+        except OSError:
+            # Filesystem read-only o similar → seguir con los bytes en memoria
+            pass
 
     ui = {
         "fecha_proc":    fecha_proc.strftime("%d-%m-%Y"),
