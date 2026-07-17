@@ -332,6 +332,7 @@ if not check_login():
 OP_SKILLS = [
     "Archivos Compartidos",
     "Actual Position",
+    "Control saldo USD Cable",
     "Compras a Liquidar",
     "Consolida SI2 para NASDAQ",
     "Risk Monitoring Client",
@@ -469,6 +470,9 @@ elif skill == "Actual Position":
     render()
 elif skill == "Compras a Liquidar":
     from skills.compras_a_liquidar.ui import render
+    render()
+elif skill == "Control saldo USD Cable":
+    from skills.control_saldo_usd_cable.ui import render
     render()
 elif skill == "Risk Position":
     from skills.risk_position.ui import render
