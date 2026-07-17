@@ -133,6 +133,22 @@ def _render_diario():
     c4.metric("Falta CC",      ui["n_falta_cc"])
     c5.metric("Discrepancias", ui["n_discrep"])
 
+    # Control SUB.ACREEDORES vs grand total del panel
+    if ui.get("sub_acreedores") is not None:
+        sub = ui["sub_acreedores"]
+        gt  = ui["grand_total"]
+        if ui["sub_acreedores_ok"]:
+            st.success(
+                f"✓ Control SUB.ACREEDORES: `{sub:,.2f}` = TOTAL `{gt:,.2f}`",
+                icon="🟢",
+            )
+        else:
+            st.error(
+                f"⚠ SUB.ACREEDORES `{sub:,.2f}` vs TOTAL `{gt:,.2f}` "
+                f"(dif `{ui['sub_acreedores_dif']:,.2f}`) — posible comitente deudor",
+                icon="🔴",
+            )
+
     # ── Alertas ───────────────────────────────────────────────────────────────
     if ui["falta_cc"]:
         with st.expander(f"🔴 OPERO - FALTA CC ({ui['n_falta_cc']})", expanded=True):

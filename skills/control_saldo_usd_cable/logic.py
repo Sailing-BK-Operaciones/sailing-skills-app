@@ -153,6 +153,24 @@ def _load_salusd(salusd_file):
     return dict(zip(df["Numero"], df["Saldo Vencido"])), nombres
 
 
+def _load_sub_acreedores(salusd_file):
+    """Lee el subtotal 'SUB.ACREEDORES' del SALUSD (columna D).
+    Devuelve el valor en convención positiva (|dato|), o None si no se encuentra.
+    """
+    if salusd_file is None:
+        return None
+    try:
+        raw = _read_excel(salusd_file, sheet_name="Listado_Saldos_Dolares", header=None)
+    except Exception:
+        return None
+    for i in range(len(raw)):
+        for j in range(raw.shape[1]):
+            if str(raw.iat[i, j]).strip().upper() == "SUB.ACREEDORES":
+                val = pd.to_numeric(raw.iat[i, 3], errors="coerce")  # columna D
+                return abs(float(val)) if pd.notna(val) else None
+    return None
+
+
 def _load_listado_gallo(listado_file):
     """Dict comitente → (broker, byma, valor) desde bloque 'LISTADO GALLO'."""
     raw = _read_excel(listado_file, sheet_name=LISTADO_SHEET, header=None)
@@ -514,11 +532,18 @@ def procesar_diario(
             })["Destino"] = dest
 
     salusd, nombres = ({}, {})
+    sub_acreedores  = None
     if salusd_file is not None:
         try:
             salusd, nombres = _load_salusd(salusd_file)
         except Exception:
             pass
+        # SUB.ACREEDORES: control global. Re-abrir el file para evitar side-effects
+        # del seek en el read anterior.
+        try:
+            sub_acreedores = _load_sub_acreedores(salusd_file)
+        except Exception:
+            sub_acreedores = None
 
     # Mapear CCs por comitente
     cc_by_ctte = {}
@@ -654,7 +679,8 @@ def procesar_diario(
                                 "Total":  ref_prev["Total"]}
 
     # Serializar outputs
-    xlsx_bytes    = _escribir_diario_excel(panel, detalle_rows, faltantes, fecha_proc, cutoff)
+    xlsx_bytes    = _escribir_diario_excel(panel, detalle_rows, faltantes,
+                                           fecha_proc, cutoff, sub_acreedores)
     estado_rows   = [
         {"Comitente": ct,
          "BROKER":    round(v["BROKER"], 2),
@@ -682,10 +708,18 @@ def procesar_diario(
             # Filesystem read-only o similar → seguir con los bytes en memoria
             pass
 
+    grand_total = sum(row[5] for row in panel)
+    sub_ok = (sub_acreedores is not None
+              and abs(sub_acreedores - grand_total) < 0.01)
     ui = {
         "fecha_proc":    fecha_proc.strftime("%d-%m-%Y"),
         "cutoff":        cutoff.strftime("%d-%m-%Y"),
         "n_panel":       len(panel),
+        "grand_total":       grand_total,
+        "sub_acreedores":    sub_acreedores,
+        "sub_acreedores_ok": sub_ok,
+        "sub_acreedores_dif": (sub_acreedores - grand_total)
+                              if sub_acreedores is not None else None,
         "n_procesados":  sum(1 for p in panel if p[8] == "SI"),
         "n_ok":          sum(1 for p in panel if p[9] == "OK"),
         "n_falta_cc":    sum(1 for p in panel if p[9] == "OPERO - FALTA CC"),
@@ -714,7 +748,8 @@ def procesar_diario(
     return xlsx_bytes, estado_bytes, dec_bytes, bd_bytes, ui
 
 
-def _escribir_diario_excel(panel, detalle_rows, faltantes, fecha_proc, cutoff) -> bytes:
+def _escribir_diario_excel(panel, detalle_rows, faltantes, fecha_proc, cutoff,
+                            sub_acreedores=None) -> bytes:
     wb = Workbook()
     ws = wb.active
     ws.title = "Resumen"
@@ -726,6 +761,18 @@ def _escribir_diario_excel(panel, detalle_rows, faltantes, fecha_proc, cutoff) -
                 "Solo se guarda el saldo cuando queda OK.")
     ws["A2"].font = Font(italic=True, size=9, color="595959")
     ws.merge_cells("A2:J2")
+
+    # Fila 3: control SUB.ACREEDORES (SALUSD) vs TOTAL calculado.
+    # Verde si coincide; rojo si hay diferencia (= algún comitente quedó deudor).
+    grand_total = sum(row[5] for row in panel)
+    ws["A3"] = "SUB.ACREEDORES"
+    ws["A3"].font = Font(bold=True)
+    if sub_acreedores is not None:
+        ok = abs(sub_acreedores - grand_total) < 0.01
+        cell = ws["C3"]
+        cell.value = sub_acreedores
+        cell.number_format = MONEY_FMT
+        cell.font = Font(bold=True, color="008000" if ok else "FF0000")
 
     hdr = ["Comitente", "Nombre", "Disponible BROKER", "Disponible BYMA",
            "A DEFINIR", "Total", "Saldo día anterior", "Saldo SALUSD",
