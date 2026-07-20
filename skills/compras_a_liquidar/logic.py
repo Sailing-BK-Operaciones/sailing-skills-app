@@ -32,6 +32,9 @@ SUBTOTAL_FILL = PatternFill("solid", fgColor="D6E4F0")
 SUBTOTAL_FONT = Font(bold=True, size=10)
 ORANGE_FILL   = PatternFill("solid", fgColor="FFE0B2")
 VENTA_FILL    = PatternFill("solid", fgColor="E2EFDA")  # verde claro para ventas
+# Cable → resaltado llamativo (violeta fuerte con texto blanco en negrita)
+CABLE_FILL    = PatternFill("solid", fgColor="7030A0")
+CABLE_FONT    = Font(bold=True, color="FFFFFF", size=10)
 THIN_BORDER   = Border(
     left=Side(style="thin"), right=Side(style="thin"),
     top=Side(style="thin"),  bottom=Side(style="thin"),
@@ -251,6 +254,16 @@ def generar_reporte(salpeso_file, opeven_file, contbole_file, especies_file):
         tiene_usd = d["opeven_mep"] > 0 or d["opeven_cable"] > 0
         fill = ORANGE_FILL if (d["total_ci"] > 0 or tiene_usd) else None
         _style_data_row(ws_res, r, money_cols=(3, 4, 5, 6, 7, 8, 9, 10), fill=fill)
+        # Cable (compras col F=6 / ventas col J=10) → resaltado llamativo violeta
+        tiene_cable = d["opeven_cable"] > 0 or d["venta_cable"] > 0
+        for ci, val in ((6, d["opeven_cable"]), (10, d["venta_cable"])):
+            if val > 0:
+                cell = ws_res.cell(r, ci)
+                cell.fill = CABLE_FILL
+                cell.font = CABLE_FONT
+        if tiene_cable:
+            for ci in (1, 2):
+                ws_res.cell(r, ci).font = Font(bold=True, color="7030A0", size=10)
 
     tot_saldo   = sum(d["saldo_deudor"] for d in resumen.values())
     tot_ars     = sum(d["opeven_ars"]   for d in resumen.values())
@@ -273,6 +286,11 @@ def generar_reporte(salpeso_file, opeven_file, contbole_file, especies_file):
         )
         if ci >= 3:
             cell.number_format = FMT_MONEY
+    # Totales de Cable también resaltados
+    for ci, val in ((6, tot_cable), (10, tot_v_cable)):
+        if val > 0:
+            ws_res.cell(r, ci).fill = CABLE_FILL
+            ws_res.cell(r, ci).font = CABLE_FONT
 
     ws_res.column_dimensions["A"].width = 12
     ws_res.column_dimensions["B"].width = 30
@@ -297,14 +315,21 @@ def generar_reporte(salpeso_file, opeven_file, contbole_file, especies_file):
             op["fec_liq"], op["especie"], op["concepto"], op["fec_ope"],  op["boleto"],
         ])
         r = ws_det.max_row
-        # Ventas → verde claro; compras CI o en dólares (MEP/Cable) → naranja
-        if op["tipo"] == "Venta":
+        # Prioridad: Cable (violeta) > Venta (verde) > CI/USD (naranja) > default
+        es_cable = op["moneda"] == "Cable"
+        if es_cable:
+            fill = CABLE_FILL
+        elif op["tipo"] == "Venta":
             fill = VENTA_FILL
         elif op["origen"] == "CONTBOLE CI" or op["moneda"] != "ARS":
             fill = ORANGE_FILL
         else:
             fill = None
         _style_data_row(ws_det, r, money_cols=(3, 10), num_cols=(9,), fill=fill)
+        # Cable (compra o venta) → fila completa en negrita sobre fondo llamativo
+        if es_cable:
+            for ci in range(1, ws_det.max_column + 1):
+                ws_det.cell(r, ci).font = CABLE_FONT
 
     col_widths = {
         "A": 12, "B": 30, "C": 18, "D": 8,  "E": 14, "F": 10, "G": 12, "H": 8,

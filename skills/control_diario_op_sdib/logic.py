@@ -28,6 +28,7 @@ C_ORANGE = "FFE0B2"
 C_TITLE  = "1E3A5F"
 C_TOTAL  = "BFC2C9"
 C_HDR_GRAY = "D9D9D9"
+C_CABLE  = "7030A0"   # violeta fuerte — aviso de operaciones USD Cable
 
 DNC_EXCEPTIONS = {
     "DNC5D": ("DNC5O", "DOLAR MEP"),
@@ -796,13 +797,92 @@ def _emit_row_999(ws, r, label, neto_b, neto_g, nota="", is_subtotal=False):
     return r + 1
 
 
+def _emit_pendientes_999(ws, r, pendientes):
+    """Banner + detalle de boletos con comprobante sin clasificar.
+    Va en el encabezado de Control 999 (mensajería unificada al tope)."""
+    n_pend = len(pendientes) if pendientes else 0
+    co_pend = C_RED if n_pend > 0 else C_GREEN
+    label_pend = (f"*** OPERACIONES PENDIENTES DE INCLUIR EN REPORTE — {n_pend} boleto(s) ***"
+                  if n_pend > 0
+                  else "TODOS LOS COMPROBANTES DEL CONTBOLE FUERON IDENTIFICADOS")
+    ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=5)
+    c_p = ws.cell(row=r, column=1, value=label_pend)
+    c_p.fill = _fl(co_pend)
+    c_p.font = Font(bold=True, color="000000")
+    c_p.alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[r].height = 20
+    r += 1
+    if pendientes:
+        sub = ws.cell(row=r, column=1,
+                      value="Comprobante no reconocido por la skill — revisar y agregar al "
+                            "mapeo (GALLO_OPC / GALLO_SEN / GALLO_MON segun corresponda).")
+        sub.font = Font(italic=True, size=9, color="595959")
+        r += 1
+        hdrs_p = ["Boleto", "CTTE", "Comprob.", "Descripcion (TABCOMPB)",
+                  "Especie", "Importe", "VN", "Segmento"]
+        for c, h in enumerate(hdrs_p, 1):
+            cell = ws.cell(row=r, column=c, value=h)
+            cell.font = Font(bold=True)
+            cell.fill = _fl("D9D9D9")
+            cell.border = _border()
+        r += 1
+        for p in pendientes:
+            ws.cell(row=r, column=1, value=p["boleto"])
+            ws.cell(row=r, column=2, value=p["ctte"])
+            cc = ws.cell(row=r, column=3, value=p["op"])
+            cc.fill = _fl(C_RED); cc.font = Font(bold=True)
+            ws.cell(row=r, column=4, value=p["nombre"])
+            ws.cell(row=r, column=5, value=p["esp"])
+            ci = ws.cell(row=r, column=6, value=p["imp"]); ci.number_format = NUM_FMT
+            cv = ws.cell(row=r, column=7, value=p["vn"]);  cv.number_format = NUM_FMT
+            ws.cell(row=r, column=8, value=p["segmento"])
+            for c in range(1, 9):
+                ws.cell(row=r, column=c).border = _border()
+            r += 1
+    return r
+
+
+def _emit_cable_alert_999(ws, r, agg):
+    """Banner de aviso si hay compras o ventas en USD Cable, para que el usuario
+    vaya al detalle de la hoja 'USD Cable'. Convención: A Recibir = ventas,
+    A Entregar = compras."""
+    ag_cable = agg.get("USD_CABLE", {})
+    ar_b = sum(d.get("ar_b", 0.) for d in ag_cable.values())   # ventas BYMA
+    ae_b = sum(d.get("ae_b", 0.) for d in ag_cable.values())   # compras BYMA
+    ar_g = sum(d.get("ar_g", 0.) for d in ag_cable.values())   # ventas Gallo
+    ae_g = sum(d.get("ae_g", 0.) for d in ag_cable.values())   # compras Gallo
+    hay_cable = max(abs(ar_b), abs(ae_b), abs(ar_g), abs(ae_g)) > TOL
+
+    if hay_cable:
+        partes = []
+        if max(abs(ae_b), abs(ae_g)) > TOL:
+            partes.append(f"COMPRAS U$S {max(ae_b, ae_g):,.2f}")
+        if max(abs(ar_b), abs(ar_g)) > TOL:
+            partes.append(f"VENTAS U$S {max(ar_b, ar_g):,.2f}")
+        label = (f"*** ATENCION: OPERACIONES EN USD CABLE — {' | '.join(partes)} "
+                 f"— VER DETALLE EN LA HOJA '{MON_LABEL['USD_CABLE']}' ***")
+        fill_c, font_c = _fl(C_CABLE), Font(bold=True, color="FFFFFF", size=11)
+    else:
+        label = "SIN OPERACIONES EN USD CABLE EN EL DIA"
+        fill_c, font_c = _fl(C_GREEN), Font(bold=True, color="000000")
+
+    ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=5)
+    c_c = ws.cell(row=r, column=1, value=label)
+    c_c.fill = fill_c
+    c_c.font = font_c
+    c_c.alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[r].height = 22
+    return r + 1
+
+
 def _write_control_999(wb, agg, ap_saldos, ap_extras, ap_filename, process_date,
                        arancel_alerts=None, pendientes=None):
     """Hoja Control 999 — saldo proyectado a fin del dia por moneda.
-    Incluye:
-      - Banner ARANCEL EN CARTERA PROPIA al tope (1000-1003)
+    Incluye (mensajería unificada al tope):
+      - Banner ARANCEL EN CARTERA PROPIA (1000-1003)
+      - Banner OPERACIONES PENDIENTES DE INCLUIR (boletos sin clasificar)
+      - Banner ATENCION: OPERACIONES EN USD CABLE (violeta si hay)
       - Por moneda: SALDO AP -> CI -> OPC -> CI_TI -> CAU -> SALDO FINAL DIARIO -> CN -> TI T1
-      - Pie: OPERACIONES PENDIENTES DE INCLUIR (boletos sin clasificar)
     """
     ws = wb.create_sheet("Control 999")
     ws.sheet_view.showGridLines = False
@@ -856,7 +936,13 @@ def _write_control_999(wb, agg, ap_saldos, ap_extras, ap_filename, process_date,
             cell_ar.fill = _fl(C_RED)
             cell_ar.font = Font(bold=True, color="FFFFFF")
             r += 1
-        r += 1  # fila en blanco antes de las monedas
+        r += 1  # fila en blanco antes del resto de la mensajería
+
+    # ── Mensajería unificada al tope: comprobantes sin clasificar + aviso Cable ──
+    r = _emit_pendientes_999(ws, r, pendientes)
+    r += 1
+    r = _emit_cable_alert_999(ws, r, agg)
+    r += 1  # fila en blanco antes de las monedas
 
     for code in ("ARS", "USD_MEP", "USD_CABLE"):
         ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=5)
@@ -959,49 +1045,10 @@ def _write_control_999(wb, agg, ap_saldos, ap_extras, ap_filename, process_date,
 
         r += 2
 
-    # ── Operaciones pendientes de incluir en reporte (comprobantes sin clasificar)
-    r += 1
-    n_pend = len(pendientes) if pendientes else 0
-    co_pend = C_RED if n_pend > 0 else C_GREEN
-    label_pend = (f"*** OPERACIONES PENDIENTES DE INCLUIR EN REPORTE — {n_pend} boleto(s) ***"
-                  if n_pend > 0
-                  else "TODOS LOS COMPROBANTES DEL CONTBOLE FUERON IDENTIFICADOS")
-    ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=5)
-    c_p = ws.cell(row=r, column=1, value=label_pend)
-    c_p.fill = _fl(co_pend)
-    c_p.font = Font(bold=True, color="FFFFFF" if n_pend > 0 else "000000")
-    c_p.alignment = Alignment(horizontal="center", vertical="center")
-    ws.row_dimensions[r].height = 20
-    r += 1
-    if pendientes:
-        sub = ws.cell(row=r, column=1,
-                      value="Comprobante no reconocido por la skill — revisar y agregar al "
-                            "mapeo (GALLO_OPC / GALLO_SEN / GALLO_MON segun corresponda).")
-        sub.font = Font(italic=True, size=9, color="595959")
-        r += 1
-        hdrs_p = ["Boleto", "CTTE", "Comprob.", "Descripcion (TABCOMPB)",
-                  "Especie", "Importe", "VN", "Segmento"]
-        for c, h in enumerate(hdrs_p, 1):
-            cell = ws.cell(row=r, column=c, value=h)
-            cell.font = Font(bold=True)
-            cell.fill = _fl("D9D9D9")
-            cell.border = _border()
-        r += 1
-        for p in pendientes:
-            ws.cell(row=r, column=1, value=p["boleto"])
-            ws.cell(row=r, column=2, value=p["ctte"])
-            cc = ws.cell(row=r, column=3, value=p["op"])
-            cc.fill = _fl(C_RED); cc.font = Font(bold=True, color="FFFFFF")
-            ws.cell(row=r, column=4, value=p["nombre"])
-            ws.cell(row=r, column=5, value=p["esp"])
-            ci = ws.cell(row=r, column=6, value=p["imp"]); ci.number_format = NUM_FMT
-            cv = ws.cell(row=r, column=7, value=p["vn"]);  cv.number_format = NUM_FMT
-            ws.cell(row=r, column=8, value=p["segmento"])
-            for c in range(1, 9):
-                ws.cell(row=r, column=c).border = _border()
-            r += 1
+    # (Los boletos sin clasificar y el aviso de Cable ya se emitieron al tope
+    #  junto al resto de la mensajería — ver _emit_pendientes_999 / _emit_cable_alert_999.)
 
-    # Anchos (cols 1-5 son las de moneda; 6-8 extras de pendientes)
+    # Anchos (cols 1-5 son las de moneda; 6-8 extras usados por el detalle de pendientes)
     for i, w in enumerate([44, 22, 22, 26, 32, 18, 14, 22], 1):
         ws.column_dimensions[get_column_letter(i)].width = w
     ws.freeze_panes = "A4"
