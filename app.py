@@ -333,6 +333,7 @@ OP_SKILLS = [
     "Archivos Compartidos",
     "Actual Position",
     "Control saldo USD Cable",
+    "Posicion aforada por ctte",
     "Compras a Liquidar",
     "Consolida SI2 para NASDAQ",
     "Risk Monitoring Client",
@@ -473,6 +474,9 @@ elif skill == "Compras a Liquidar":
     render()
 elif skill == "Control saldo USD Cable":
     from skills.control_saldo_usd_cable.ui import render
+    render()
+elif skill == "Posicion aforada por ctte":
+    from skills.posicion_aforada.ui import render
     render()
 elif skill == "Risk Position":
     from skills.risk_position.ui import render
