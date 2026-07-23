@@ -38,7 +38,10 @@ DNC_EXCEPTIONS = {
 }
 
 GALLO_CAU  = {"CCCD", "CCTE", "TCCD", "TOCT", "CTCD", "CTTD", "CCCP", "CCFP"}
-GALLO_TRAS = {"VTTR", "COTR"}
+GALLO_TRAS = {"VTTR", "COTR",           # trading ARS plano
+              "CTRP", "VTTU",           # trading PARIDAD (MEP)
+              "CTCP", "VTCP",           # trading C.P. (ARS)
+              "CTRU", "VTRP"}           # trading U$S C.P. (MEP)
 GALLO_SNB  = {"CRCN", "VRCN"}
 GALLO_MAV  = {"VCHM", "CCHM"}
 GALLO_OPC  = {"COPR", "VTPR", "CPTR", "VPTR"}   # Opciones (compra/venta de prima) — siempre ARS, siempre T+0
@@ -50,6 +53,9 @@ GALLO_SEN = {
     "VTAS": "V", "VTU$": "V", "VTUC": "V", "VSU$": "V",
     "VRCN": "V", "VCHM": "V", "VTPR": "V", "VPTR": "V",
     "COTR": "C", "VTTR": "V",
+    "CTRP": "C", "VTTU": "V",   # trading paridad (MEP)
+    "CTCP": "C", "VTCP": "V",   # trading C.P. (ARS)
+    "CTRU": "C", "VTRP": "V",   # trading U$S C.P. (MEP)
     "CCCD": "V", "CCTE": "V",
     "TCCD": "C", "TOCT": "C",
     "CCCP": "V", "CCFP": "V",
@@ -66,6 +72,9 @@ GALLO_MON = {
     "CTCD": "DOLAR MEP", "CTTD": "DOLAR MEP",
     "CPUC": "USD",       "VTUC": "USD",
     "VTTR": "Pesos",     "COTR": "Pesos",
+    "CTCP": "Pesos",     "VTCP": "Pesos",     # trading C.P. (ARS)
+    "CTRP": "DOLAR MEP", "VTTU": "DOLAR MEP", # trading paridad (MEP)
+    "CTRU": "DOLAR MEP", "VTRP": "DOLAR MEP", # trading U$S C.P. (MEP)
     "CCCD": "Pesos",     "CCTE": "Pesos",
     "TCCD": "Pesos",     "TOCT": "Pesos",
     "CCCP": "DOLAR MEP", "CCFP": "DOLAR MEP",
