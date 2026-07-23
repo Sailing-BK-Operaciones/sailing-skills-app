@@ -356,6 +356,9 @@ SUSP_SKILLS = [
     "Settlement Instruction",
     "Settlement Obligation",
 ]
+TOOLS_SKILLS = [
+    "Calculadora Cauciones",
+]
 
 # ── Estado de navegación: inicializar keys solo si no existen ─────────────────
 if "active_skill" not in st.session_state:
@@ -368,28 +371,41 @@ if "_nav_gest" not in st.session_state:
     st.session_state._nav_gest = _active if _active in GEST_SKILLS else None
 if "_nav_susp" not in st.session_state:
     st.session_state._nav_susp = _active if _active in SUSP_SKILLS else None
+if "_nav_tools" not in st.session_state:
+    st.session_state._nav_tools = _active if _active in TOOLS_SKILLS else None
 
 # ── Callbacks: actualizan active_skill y limpian los otros grupos ─────────────
 def _on_op_change():
     chosen = st.session_state._nav_op
     if chosen:
         st.session_state.active_skill = chosen
-        st.session_state._nav_gest = None
-        st.session_state._nav_susp = None
+        st.session_state._nav_gest  = None
+        st.session_state._nav_susp  = None
+        st.session_state._nav_tools = None
 
 def _on_gest_change():
     chosen = st.session_state._nav_gest
     if chosen:
         st.session_state.active_skill = chosen
-        st.session_state._nav_op   = None
-        st.session_state._nav_susp = None
+        st.session_state._nav_op    = None
+        st.session_state._nav_susp  = None
+        st.session_state._nav_tools = None
 
 def _on_susp_change():
     chosen = st.session_state._nav_susp
     if chosen:
         st.session_state.active_skill = chosen
+        st.session_state._nav_op    = None
+        st.session_state._nav_gest  = None
+        st.session_state._nav_tools = None
+
+def _on_tools_change():
+    chosen = st.session_state._nav_tools
+    if chosen:
+        st.session_state.active_skill = chosen
         st.session_state._nav_op   = None
         st.session_state._nav_gest = None
+        st.session_state._nav_susp = None
 
 # ── Header: título + toggle day/dark (icono compacto) ────────────────────────
 _hcol_title, _hcol_toggle = st.sidebar.columns([5, 1])
@@ -452,6 +468,12 @@ with st.sidebar.expander("📊 GESTIÓN DEL ÁREA", expanded=False, key="exp_ges
 with st.sidebar.expander("⏸ EN SUSPENSO", expanded=False, key="exp_susp"):
     st.radio("", SUSP_SKILLS, index=None,
              key="_nav_susp", on_change=_on_susp_change,
+             label_visibility="collapsed")
+
+# ── Grupo 4 ──
+with st.sidebar.expander("🧮 HERRAMIENTAS", expanded=False, key="exp_tools"):
+    st.radio("", TOOLS_SKILLS, index=None,
+             key="_nav_tools", on_change=_on_tools_change,
              label_visibility="collapsed")
 
 skill = st.session_state.active_skill
@@ -519,6 +541,9 @@ elif skill == "Tesorería":
     render()
 elif skill == "Reporte Operativo":
     from skills.reporte_operativo.ui import render
+    render()
+elif skill == "Calculadora Cauciones":
+    from skills.calculadora_caucion.ui import render
     render()
 else:
     st.info(f"**{skill}** — skill en construcción.", icon="🚧")
