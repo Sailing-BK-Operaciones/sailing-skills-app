@@ -270,13 +270,22 @@
   var nf = new Intl.NumberFormat('es-AR',{minimumFractionDigits:2, maximumFractionDigits:2});
   var pf = new Intl.NumberFormat('es-AR',{minimumFractionDigits:2, maximumFractionDigits:2});
 
-  function parseNum(str){
+  // Monto: convencion argentina — el punto SIEMPRE es separador de miles, la coma es decimal.
+  function parseAmount(str){
+    if(str==null) return NaN;
+    str = (''+str).trim().replace(/\s/g,'').replace(/%/g,'').replace(/\$/g,'').replace(/US/gi,'');
+    if(str==='') return NaN;
+    str = str.replace(/\./g,'');   // quitar puntos de miles
+    str = str.replace(',','.');    // coma decimal -> punto
+    var n = parseFloat(str);
+    return isNaN(n)?NaN:n;
+  }
+  // Tasa / dias: numeros chicos sin miles; punto o coma valen como decimal.
+  function parseRate(str){
     if(str==null) return NaN;
     str = (''+str).trim().replace(/\s/g,'').replace(/%/g,'');
     if(str==='') return NaN;
-    if(str.indexOf(',')>-1){ str = str.replace(/\./g,'').replace(',','.'); }
-    // if only dots and looks like thousands (e.g. 10.000.000) collapse them
-    else if((str.match(/\./g)||[]).length>1){ str = str.replace(/\./g,''); }
+    str = str.replace(',','.');
     var n = parseFloat(str);
     return isNaN(n)?NaN:n;
   }
@@ -314,8 +323,8 @@
     return {interes:interes, arancel:arancel, derechos:derechos, iva:iva, gcias:gcias, gastos:gastos, neto:neto, resultado:resultado, tasaNeta:tasaNeta};
   }
 
-  function readField(id){
-    var el=$(id); var v=parseNum(el.value);
+  function readField(id, parser){
+    var el=$(id); var v=(parser||parseRate)(el.value);
     var ok = !isNaN(v) && v>0;
     el.closest('.inputbox').classList.toggle('err', !ok && el.value.trim()!=='');
     return ok? v : NaN;
@@ -324,7 +333,7 @@
   var EM = "—";
   function render(){
     // TOMADORA
-    var tm=readField('tom-monto'), tt=readField('tom-tasa'), td=readField('tom-dias');
+    var tm=readField('tom-monto',parseAmount), tt=readField('tom-tasa',parseRate), td=readField('tom-dias',parseRate);
     if(!isNaN(tm)&&!isNaN(tt)&&!isNaN(td)){
       var r=calcTom(tm, tt/100, td);
       set('tom-tasaneta',pct(r.tasaNeta)); set('tom-total',money(r.total));
@@ -335,7 +344,7 @@
       ['tasaneta','total','interes','arancel','derreg','derechos','iva','gastos','costo'].forEach(function(s){set('tom-'+s,EM)});
     }
     // COLOCADORA
-    var cm=readField('col-monto'), ct=readField('col-tasa'), cd=readField('col-dias');
+    var cm=readField('col-monto',parseAmount), ct=readField('col-tasa',parseRate), cd=readField('col-dias',parseRate);
     if(!isNaN(cm)&&!isNaN(ct)&&!isNaN(cd)){
       var c=calcCol(cm, ct/100, cd);
       set('col-tasaneta',pct(c.tasaNeta)); set('col-neto',money(c.neto));
@@ -347,10 +356,11 @@
     }
   }
 
-  // format monto on blur (argentine grouping)
+  // format monto on blur -> 100.000,00 (miles con punto, 2 decimales con coma)
+  var montoFmt = new Intl.NumberFormat('es-AR',{minimumFractionDigits:2, maximumFractionDigits:2});
   function fmtMonto(el){
-    var v=parseNum(el.value);
-    if(!isNaN(v)){ el.value = new Intl.NumberFormat('es-AR',{maximumFractionDigits:2}).format(v); }
+    var v=parseAmount(el.value);
+    if(!isNaN(v)){ el.value = montoFmt.format(v); }
   }
 
   ['tom-monto','tom-tasa','tom-dias','col-monto','col-tasa','col-dias'].forEach(function(id){
@@ -358,6 +368,9 @@
     el.addEventListener('input', render);
     if(id.indexOf('monto')>-1){ el.addEventListener('blur', function(){fmtMonto(el); render();}); }
   });
+
+  // normalizar los montos iniciales a 100.000,00 al cargar
+  fmtMonto($('tom-monto')); fmtMonto($('col-monto'));
 
   // currency toggle
   Array.prototype.forEach.call(document.querySelectorAll('.ccy button'), function(b){
